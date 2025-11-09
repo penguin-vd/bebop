@@ -4,7 +4,7 @@ const pg = @import("pg");
 
 const App = @import("app.zig");
 const routes = @import("routes.zig");
-const m = @import("migrations.zig");
+const m = @import("orm/migrations.zig");
 const User = @import("models/user.zig");
 
 fn getDbPool(allocator: std.mem.Allocator) !*pg.Pool {
@@ -38,13 +38,16 @@ pub fn main() !void {
     if (args.len > 1) {
         const command = args[1];
         if (std.mem.eql(u8, command, "makemigrations")) {
-            try m.makeMigration(allocator, User);
+            var db = try getDbPool(allocator);
+            defer db.deinit();
+
+            try m.makeMigration(allocator, db, User);
             return;
         } else if (std.mem.eql(u8, command, "migrate")) {
             var db = try getDbPool(allocator);
             defer db.deinit();
 
-            try m.runMigrations(allocator, db);
+            try m.migrate(allocator, db);
             return;
         } else {
             std.debug.print("Unknown command: {s}\n", .{command});
@@ -52,7 +55,6 @@ pub fn main() !void {
         }
     }
 
-    // Default to running the server
     var db = try getDbPool(allocator);
     defer db.deinit();
 
