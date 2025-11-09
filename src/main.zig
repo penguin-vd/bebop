@@ -7,44 +7,66 @@ const routes = @import("routes.zig");
 const m = @import("migrations.zig");
 const User = @import("models/user.zig");
 
+fn getDbPool(allocator: std.mem.Allocator) !*pg.Pool {
+    var env_map = try std.process.getEnvMap(allocator);
+    defer env_map.deinit();
+
+    return try pg.Pool.init(
+        allocator,
+        .{
+            .connect = .{
+                .port = try std.fmt.parseInt(u16, env_map.get("POSTGRES_PORT") orelse "5432", 10),
+                .host = env_map.get("POSTGRES_HOST") orelse "postgres",
+            },
+            .auth = .{
+                .username = env_map.get("POSTGRES_USER").?,
+                .database = env_map.get("POSTGRES_DATABASE").?,
+                .password = env_map.get("POSTGRES_PASSWORD").?,
+            },
+        },
+    );
+}
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
+    defer _ = gpa.deinit();
 
-    const migration = try m.generateMigration(allocator, User);
-    std.debug.print("{s}\n", .{migration});
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
 
-    // var env_map = try std.process.getEnvMap(allocator);
-    // defer env_map.deinit();
-    //
-    // var db = try pg.Pool.init(
-    //     allocator,
-    //     .{
-    //         .connect = .{
-    //             .port = try std.fmt.parseInt(u16, env_map.get("POSTGRES_PORT") orelse "5432", 10),
-    //             .host = env_map.get("POSTGRES_HOST") orelse "postgres",
-    //         },
-    //         .auth = .{
-    //             .username = env_map.get("POSTGRES_USER").?,
-    //             .database = env_map.get("POSTGRES_DATABASE").?,
-    //             .password = env_map.get("POSTGRES_PASSWORD").?,
-    //         },
-    //     },
-    // );
-    // defer db.deinit();
-    //
-    // var app = App{
-    //     .db = db,
-    // };
-    //
-    // var server = try httpz.Server(*App).init(allocator, .{
-    //     .port = 8080,
-    //     .address = "0.0.0.0",
-    // }, &app);
-    //
-    // const router = try server.router(.{});
-    // try routes.register(router);
-    //
-    // try server.listen();
+    if (args.len > 1) {
+        const command = args[1];
+        if (std.mem.eql(u8, command, "makemigrations")) {
+            try m.makeMigration(allocator, User);
+            return;
+        } else if (std.mem.eql(u8, command, "migrate")) {
+            var db = try getDbPool(allocator);
+            defer db.deinit();
+
+            try m.runMigrations(allocator, db);
+            return;
+        } else {
+            std.debug.print("Unknown command: {s}\n", .{command});
+            return;
+        }
+    }
+
+    // Default to running the server
+    var db = try getDbPool(allocator);
+    defer db.deinit();
+
+    var app = App{
+        .db = db,
+    };
+
+    var server = try httpz.Server(*App).init(allocator, .{
+        .port = 8080,
+        .address = "0.0.0.0",
+    }, &app);
+
+    const router = try server.router(.{});
+    try routes.register(router);
+
+    try server.listen();
 }
