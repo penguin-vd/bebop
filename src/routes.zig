@@ -4,27 +4,28 @@ const httpz = @import("httpz");
 
 const User = @import("models/user.zig");
 const ORM = @import("orm/mapper.zig");
+const pg_driver = @import("orm/drivers/pg.zig").driver;
 
 pub const Router = httpz.Router(*App, *const fn (*App.RequestContext, *httpz.Request, *httpz.Response) anyerror!void);
 
 pub fn register(router: *Router) !void {
-    router.get("api/healthz", healthCheck, .{});
-    router.get("api/users", listUsers, .{});
-    router.post("api/users", createUser, .{});
+    router.get("api/healthz", health_check, .{});
+    router.get("api/users", list_users, .{});
+    router.post("api/users", create_user, .{});
 }
 
-pub fn listUsers(ctx: *App.RequestContext, _: *httpz.Request, res: *httpz.Response) !void {
+pub fn list_users(ctx: *App.RequestContext, _: *httpz.Request, res: *httpz.Response) !void {
     var conn = try ctx.app.db.acquire();
     defer conn.deinit();
 
-    const userMap = ORM.Map(User){};
-    const users = try userMap.list(res.arena, conn);
+    const user_map = ORM.Map(User, pg_driver){};
+    const users = try user_map.list(res.arena, conn);
     defer res.arena.free(users);
 
     try res.json(users, .{});
 }
 
-pub fn createUser(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Response) !void {
+pub fn create_user(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Response) !void {
     var conn = try ctx.app.db.acquire();
     defer conn.release();
 
@@ -33,8 +34,8 @@ pub fn createUser(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Res
     });
 
     if (body) |dto| {
-        const userMap = ORM.Map(User){};
-        const created_user = try userMap.create(res.arena, conn, .{
+        const user_map = ORM.Map(User, pg_driver){};
+        const created_user = try user_map.create(res.arena, conn, .{
             .name = dto.name,
             .id = undefined,
         });
@@ -46,7 +47,7 @@ pub fn createUser(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Res
     try res.json(.{ .message = "Invalid body" }, .{});
 }
 
-pub fn healthCheck(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Response) !void {
+pub fn health_check(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Response) !void {
     _ = req;
 
     var conn = try ctx.app.db.acquire();

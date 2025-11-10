@@ -6,8 +6,9 @@ const App = @import("app.zig");
 const routes = @import("routes.zig");
 const m = @import("orm/migrations.zig");
 const User = @import("models/user.zig");
+const pg_driver = @import("orm/drivers/pg.zig").driver;
 
-fn getDbPool(allocator: std.mem.Allocator) !*pg.Pool {
+fn get_db_pool(allocator: std.mem.Allocator) !*pg.Pool {
     var env_map = try std.process.getEnvMap(allocator);
     defer env_map.deinit();
 
@@ -38,16 +39,16 @@ pub fn main() !void {
     if (args.len > 1) {
         const command = args[1];
         if (std.mem.eql(u8, command, "makemigrations")) {
-            var db = try getDbPool(allocator);
+            var db = try get_db_pool(allocator);
             defer db.deinit();
 
-            try m.makeMigration(allocator, db, User);
+            try m.make_migration(allocator, db, User, pg_driver);
             return;
         } else if (std.mem.eql(u8, command, "migrate")) {
-            var db = try getDbPool(allocator);
+            var db = try get_db_pool(allocator);
             defer db.deinit();
 
-            try m.migrate(allocator, db);
+            try m.migrate(allocator, db, pg_driver);
             return;
         } else {
             std.debug.print("Unknown command: {s}\n", .{command});
@@ -55,7 +56,7 @@ pub fn main() !void {
         }
     }
 
-    var db = try getDbPool(allocator);
+    var db = try get_db_pool(allocator);
     defer db.deinit();
 
     var app = App{

@@ -1,2 +1,0 @@
-ALTER TABLE models_user ADD COLUMN name TEXT DEFAULT '';
-ALTER TABLE models_user ADD COLUMN email TEXT DEFAULT '' UNIQUE;

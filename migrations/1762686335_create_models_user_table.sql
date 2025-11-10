@@ -1,3 +1,0 @@
-CREATE TABLE IF NOT EXISTS models_user (
-  id SERIAL PRIMARY KEY
-);
