@@ -6,15 +6,29 @@ const Driver = @import("drivers/base.zig").Driver;
 pub fn Map(comptime Model: type, driver: Driver) type {
     return struct {
         const Self = @This();
+        pub const Filter = utils.QueryFilter(Model);
 
-        pub fn list(_: *const Self, allocator: std.mem.Allocator, conn: *pg.Conn) ![]Model {
-            const sql = try driver.build_list_query(allocator, Model);
+        pub fn list(_: *const Self, allocator: std.mem.Allocator, conn: *pg.Conn, filter: ?Filter) ![]Model {
+            var sql: []const u8 = undefined;
             defer allocator.free(sql);
 
-            var result = try conn.query(sql, .{});
+            var result: *pg.Result = undefined;
             defer result.deinit();
 
-            var models = std.ArrayList(Model){};
+            if (filter) |f| {
+                sql = try driver.build_list_query_with_filter(allocator, Model, f);
+
+                result = try conn.query(sql, .{});
+            } else {
+                const base_sql = try driver.build_list_query(allocator, Model);
+                defer allocator.free(base_sql);
+                sql = try std.fmt.allocPrint(allocator, "{s};", .{base_sql});
+                result = try conn.query(sql, .{});
+            }
+            
+            std.log.info("SQL: {s}\n", .{sql});
+
+            var models: std.ArrayList(Model) = .{};
             errdefer models.deinit(allocator);
 
             while (try result.next()) |row| {

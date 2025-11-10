@@ -15,4 +15,5 @@ pub const Driver = struct {
     type_matches: *const fn (model_type: []const u8, db_type: []const u8) bool,
     get_default_value: *const fn (comptime T: type) []const u8,
     ensure_migrations_table: *const fn (db: anytype) anyerror!void,
+    build_list_query_with_filter: *const fn (allocator: std.mem.Allocator, comptime Model: type, filter: anytype) anyerror![]const u8,
 };

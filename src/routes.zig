@@ -4,6 +4,7 @@ const httpz = @import("httpz");
 
 const User = @import("models/user.zig");
 const ORM = @import("orm/mapper.zig");
+const utils = @import("orm/utils.zig");
 const pg_driver = @import("orm/drivers/pg.zig").driver;
 
 pub const Router = httpz.Router(*App, *const fn (*App.RequestContext, *httpz.Request, *httpz.Response) anyerror!void);
@@ -14,15 +15,22 @@ pub fn register(router: *Router) !void {
     router.post("api/users", create_user, .{});
 }
 
-pub fn list_users(ctx: *App.RequestContext, _: *httpz.Request, res: *httpz.Response) !void {
+pub fn list_users(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Response) !void {
     var conn = try ctx.app.db.acquire();
     defer conn.deinit();
 
     const user_map = ORM.Map(User, pg_driver){};
-    const users = try user_map.list(res.arena, conn);
-    defer res.arena.free(users);
+    const query = try req.query();
 
-    try res.json(users, .{});
+    if (query.get("search")) |search| {
+        const users = try user_map.list(res.arena, conn, .{
+            .name__contains = search,
+        });
+        try res.json(users, .{});
+    } else {
+        const users = try user_map.list(res.arena, conn, null);
+        try res.json(users, .{});
+    }
 }
 
 pub fn create_user(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Response) !void {

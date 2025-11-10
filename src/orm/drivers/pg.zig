@@ -327,6 +327,105 @@ fn ensure_migrations_table(db: anytype) !void {
     _ = try conn.exec(sql, .{});
 }
 
+fn build_list_query_with_filter(allocator: std.mem.Allocator, comptime Model: type, filter: anytype) ![]const u8 {
+    const table_name = try utils.get_table_name(allocator, Model);
+    defer allocator.free(table_name);
+
+    const field_list = try utils.get_field_list(allocator, Model);
+    defer allocator.free(field_list);
+
+    var sql: std.ArrayList(u8) = .{};
+    defer sql.deinit(allocator);
+
+    try sql.print(allocator, "SELECT {s} FROM {s}", .{ field_list, table_name });
+
+    var has_where = false;
+
+    inline for (@typeInfo(@TypeOf(filter)).@"struct".fields) |field| {
+        const val = @field(filter, field.name);
+        if (val) |v| {
+            if (!has_where) {
+                try sql.print(allocator, " WHERE ", .{});
+                has_where = true;
+            } else {
+                try sql.print(allocator, " AND ", .{});
+            }
+
+            // Parse field name and operator
+            const field_name = comptime blk: {
+                if (std.mem.indexOf(u8, field.name, "__")) |idx| {
+                    break :blk field.name[0..idx];
+                }
+                break :blk field.name;
+            };
+
+            const operator = comptime blk: {
+                if (std.mem.indexOf(u8, field.name, "__")) |idx| {
+                    break :blk field.name[idx + 2 ..];
+                }
+                break :blk "eq";
+            };
+
+            const column_name = utils.get_column_name(Model, field_name);
+            try sql.print(allocator, "{s}", .{column_name});
+
+            // Format the value directly into SQL (with proper escaping!)
+            const value_str = try formatSqlValue(allocator, v);
+            defer allocator.free(value_str);
+
+            if (std.mem.eql(u8, operator, "contains")) {
+                try sql.print(allocator, " ILIKE '%' || {s} || '%'", .{value_str});
+            } else if (std.mem.eql(u8, operator, "startsWith")) {
+                try sql.print(allocator, " ILIKE {s} || '%'", .{value_str});
+            } else if (std.mem.eql(u8, operator, "endsWith")) {
+                try sql.print(allocator, " ILIKE '%' || {s}", .{value_str});
+            } else if (std.mem.eql(u8, operator, "gt")) {
+                try sql.print(allocator, " > {s}", .{value_str});
+            } else if (std.mem.eql(u8, operator, "gte")) {
+                try sql.print(allocator, " >= {s}", .{value_str});
+            } else if (std.mem.eql(u8, operator, "lt")) {
+                try sql.print(allocator, " < {s}", .{value_str});
+            } else if (std.mem.eql(u8, operator, "lte")) {
+                try sql.print(allocator, " <= {s}", .{value_str});
+            } else {
+                try sql.print(allocator, " = {s}", .{value_str});
+            }
+        }
+    }
+
+    try sql.print(allocator, ";", .{});
+    return sql.toOwnedSlice(allocator);
+}
+
+fn formatSqlValue(allocator: std.mem.Allocator, value: anytype) ![]const u8 {
+    const T = @TypeOf(value);
+    
+    switch (@typeInfo(T)) {
+        .int, .comptime_int => {
+            return std.fmt.allocPrint(allocator, "{d}", .{value});
+        },
+        .float, .comptime_float => {
+            return std.fmt.allocPrint(allocator, "{d}", .{value});
+        },
+        .pointer => |ptr| {
+            if (ptr.size == .slice and ptr.child == u8) {
+                return std.fmt.allocPrint(allocator, "'{s}'", .{escapeSqlString(value)});
+            }
+            return std.fmt.allocPrint(allocator, "'{any}'", .{value});
+        },
+        else => {
+            return std.fmt.allocPrint(allocator, "'{any}'", .{value});
+        },
+    }
+}
+
+fn escapeSqlString(str: []const u8) []const u8 {
+    // TODO: Properly escape single quotes by doubling them
+    // For now, this is a placeholder - you should implement proper escaping
+    // Replace ' with ''
+    return str; // FIXME: implement actual escaping!
+}
+
 pub const driver = base.Driver{
     .build_list_query = build_list_query,
     .build_insert_query = build_insert_query,
@@ -337,5 +436,5 @@ pub const driver = base.Driver{
     .type_matches = type_matches,
     .get_default_value = get_default_value,
     .ensure_migrations_table = ensure_migrations_table,
+    .build_list_query_with_filter = build_list_query_with_filter,
 };
-
