@@ -1,16 +1,18 @@
 const std = @import("std");
 const pg = @import("pg");
 const utils = @import("utils.zig");
-const Driver = @import("drivers/base.zig").Driver;
+const queries = @import("queries.zig");
 
-pub fn make_migration(allocator: std.mem.Allocator, db: *pg.Pool, comptime Model: type, driver: Driver) !void {
+pub fn make_migration(allocator: std.mem.Allocator, db: *pg.Pool, comptime Model: type) !void {
     var conn = try db.acquire();
     defer conn.release();
 
-    const table_name = try utils.get_table_name(allocator, Model);
-    defer allocator.free(table_name);
+    const table_name = if (@hasDecl(Model, "table_name"))
+        Model.table_name
+    else
+        unreachable;
 
-    var table_info = try driver.get_table_information(allocator, conn, table_name);
+    var table_info = try utils.get_table_information(allocator, conn, table_name);
     defer {
         for (table_info.items) |info| {
             allocator.free(info.column);
@@ -20,9 +22,9 @@ pub fn make_migration(allocator: std.mem.Allocator, db: *pg.Pool, comptime Model
     }
 
     const sql = if (table_info.items.len == 0)
-        try driver.build_create_table_query(allocator, Model)
+        try queries.build_create_table_query(allocator, Model)
     else
-        try driver.build_alter_table_query(allocator, Model, table_info);
+        try queries.build_alter_table_query(allocator, Model, table_info);
     defer allocator.free(sql);
 
     if (sql.len == 0) {
@@ -52,8 +54,8 @@ pub fn make_migration(allocator: std.mem.Allocator, db: *pg.Pool, comptime Model
     std.debug.print("Created migration: {s}\n", .{migration_name});
 }
 
-pub fn migrate(allocator: std.mem.Allocator, db: *pg.Pool, driver: Driver) !void {
-    try driver.ensure_migrations_table(db);
+pub fn migrate(allocator: std.mem.Allocator, db: *pg.Pool) !void {
+    try queries.ensure_migrations_table(db);
 
     var applied_migrations: std.ArrayList([]const u8) = .{};
     defer {

@@ -98,7 +98,7 @@ pub fn to_sql_type(comptime T: type) []const u8 {
         .pointer => |ptr_info| {
             if (ptr_info.size == .slice) {
                 if (@typeInfo(ptr_info.child) == .@"struct") {
-                    return "SKIP"; // This is a hasMany relation
+                    return "SKIP";
                 }
                 if (ptr_info.child == u8) {
                     return "TEXT";
@@ -253,4 +253,78 @@ pub fn QueryFilter(comptime Model: type) type {
         .decls = &.{},
         .is_tuple = false,
     } });
+}
+
+pub const TableInformation = struct {
+    column: []const u8,
+    type: []const u8,
+};
+
+pub fn get_table_information(allocator: std.mem.Allocator, conn: anytype, table_name: []const u8) !std.ArrayList(TableInformation) {
+    const sql = "SELECT column_name, data_type, character_maximum_length FROM INFORMATION_SCHEMA.COLUMNS WHERE table_name = $1";
+    var result = try conn.query(sql, .{table_name});
+    defer result.deinit();
+
+    var array: std.ArrayList(TableInformation) = .{};
+
+    while (try result.next()) |row| {
+        const t = row.get([]const u8, 1);
+        const tUpper = try allocator.alloc(u8, t.len);
+        for (t, 0..) |char, i| {
+            tUpper[i] = std.ascii.toLower(char);
+        }
+
+        const c = row.get([]const u8, 0);
+        const cClone = try allocator.dupe(u8, c);
+        try array.append(allocator, .{
+            .type = tUpper,
+            .column = cClone,
+        });
+    }
+
+    return array;
+}
+
+pub fn type_matches(model_type: []const u8, db_type: []const u8) bool {
+    if (std.mem.eql(u8, model_type, "INTEGER") and
+        (std.mem.eql(u8, db_type, "integer") or std.mem.eql(u8, db_type, "int4")))
+    {
+        return true;
+    }
+    if (std.mem.eql(u8, model_type, "BIGINT") and
+        (std.mem.eql(u8, db_type, "bigint") or std.mem.eql(u8, db_type, "int8")))
+    {
+        return true;
+    }
+
+    if (std.mem.eql(u8, model_type, "TEXT") and
+        (std.mem.eql(u8, db_type, "text") or std.mem.eql(u8, db_type, "character varying")))
+    {
+        return true;
+    }
+
+    if (std.mem.eql(u8, model_type, "REAL") and
+        (std.mem.eql(u8, db_type, "real") or std.mem.eql(u8, db_type, "float4")))
+    {
+        return true;
+    }
+
+    if (std.mem.eql(u8, model_type, "BOOLEAN") and
+        (std.mem.eql(u8, db_type, "boolean") or std.mem.eql(u8, db_type, "bool")))
+    {
+        return true;
+    }
+
+    return std.mem.eql(u8, model_type, db_type);
+}
+
+pub fn get_default_value(comptime T: type) []const u8 {
+    return switch (@typeInfo(T)) {
+        .int => "0",
+        .float => "0.0",
+        .bool => "false",
+        .pointer => "''",
+        .optional => "NULL",
+        else => "''",
+    };
 }
