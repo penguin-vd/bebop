@@ -21,14 +21,18 @@ pub fn list_users(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Res
 
     const user_map = ORM.Map(User, pg_driver){};
     const query = try req.query();
+    const relations_to_load = [_][]const u8{"role"};
 
     if (query.get("search")) |search| {
         const users = try user_map.list(res.arena, conn, .{
             .name__contains = search,
-        });
+        }, null);
         try res.json(users, .{});
     } else {
-        const users = try user_map.list(res.arena, conn, null);
+        const users = try user_map.list(res.arena, conn, null, .{
+            .with = &relations_to_load
+        }
+    );
         try res.json(users, .{});
     }
 }

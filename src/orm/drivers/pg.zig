@@ -83,36 +83,62 @@ fn build_create_table_query(
     }
 
     inline for (struct_info.fields, 0..) |field, i| {
-        const meta = utils.get_field_meta(Model, field.name);
-        const column_name = if (meta) |m| m.column_name orelse field.name else field.name;
-        const sql_type = to_sql_type(field.type);
-        const nullable = @typeInfo(field.type) == .optional;
+        var column_name_buf: [256]u8 = undefined;
+        var column_name: []const u8 = field.name;
+        var sql_type = utils.to_sql_type(field.type);
 
-        try sql.print(allocator, "  {s} {s}", .{ column_name, sql_type });
-
-        if (meta) |m| {
-            if (m.is_auto_increment) {
-                try sql.print(allocator, " GENERATED ALWAYS AS IDENTITY", .{});
+        if (!std.mem.eql(u8, sql_type, "SKIP")) { // Only execute if not SKIP
+            if (std.mem.eql(u8, sql_type, "BELONGS_TO")) {
+                column_name = try std.fmt.bufPrint(&column_name_buf, "{s}_id", .{field.name});
+                sql_type = "INTEGER";
+            } else {
+                const meta = utils.get_field_meta(Model, field.name);
+                if (meta) |m| {
+                    if (m.column_name) |cn| {
+                        column_name = cn;
+                    }
+                }
             }
-        }
 
-        if (!nullable) {
-            try sql.print(allocator, " NOT NULL", .{});
-        }
+            const nullable = @typeInfo(field.type) == .optional;
 
-        if (meta) |m| {
-            if (m.is_unique and !m.is_primary_key) {
-                try sql.print(allocator, " UNIQUE", .{});
+            try sql.print(allocator, "  {s} {s}", .{ column_name, sql_type });
+
+            if (std.mem.eql(u8, utils.to_sql_type(field.type), "BELONGS_TO")) {
+                const RelatedModel = comptime blk: {
+                    const field_type_info = @typeInfo(field.type);
+                    break :blk if (field_type_info == .optional) field_type_info.optional.child else field.type;
+                };
+                const related_table_name = try utils.get_table_name(allocator, RelatedModel);
+                try sql.print(allocator, " REFERENCES {s}(id)", .{related_table_name});
+                allocator.free(related_table_name);
             }
-            if (m.default_value) |default| {
-                try sql.print(allocator, " DEFAULT {s}", .{default});
-            }
-        }
 
-        if (i < struct_info.fields.len - 1 or primary_keys.items.len > 0) {
-            try sql.print(allocator, ",\n", .{});
-        } else {
-            try sql.print(allocator, "\n", .{});
+            const meta = utils.get_field_meta(Model, field.name);
+            if (meta) |m| {
+                if (m.is_auto_increment) {
+                    try sql.print(allocator, " GENERATED ALWAYS AS IDENTITY", .{});
+                }
+            }
+
+            if (!nullable) {
+                try sql.print(allocator, " NOT NULL", .{});
+            }
+
+            if (meta) |m| {
+                if (m.is_unique and !m.is_primary_key) {
+                    try sql.print(allocator, " UNIQUE", .{});
+                }
+                if (m.default_value) |default| {
+                    try sql.print(allocator, " DEFAULT {s}", .{default});
+                }
+            }
+
+            if (i < struct_info.fields.len - 1 or primary_keys.items.len > 0) {
+                try sql.print(allocator, ",\n", .{});
+            } else {
+                try sql.print(allocator, "\n", .{});
+            }
         }
     }
 
@@ -148,63 +174,92 @@ fn build_alter_table_query(
     const struct_info = type_info.@"struct";
 
     var model_columns: std.ArrayList([]const u8) = .{};
-    defer model_columns.deinit(allocator);
+    defer {
+        for (model_columns.items) |item| {
+            allocator.free(item);
+        }
+        model_columns.deinit(allocator);
+    }
 
     inline for (struct_info.fields) |field| {
-        const meta = utils.get_field_meta(Model, field.name);
-        const column_name = if (meta) |m| m.column_name orelse field.name else field.name;
+        var column_name_buf: [256]u8 = undefined;
+        var column_name: []const u8 = field.name;
+        var sql_type = utils.to_sql_type(field.type);
 
-        try model_columns.append(allocator, column_name);
-
-        const sql_type = to_sql_type(field.type);
-        const nullable = @typeInfo(field.type) == .optional;
-
-        var column_exists = false;
-        var needs_type_update = false;
-
-        for (table_info.items) |info| {
-            if (std.mem.eql(u8, info.column, column_name)) {
-                column_exists = true;
-                needs_type_update = !type_matches(sql_type, info.type);
-                break;
-            }
-        }
-
-        if (!column_exists) {
-            try sql.print(allocator, "ALTER TABLE {s} ADD COLUMN {s} {s}", .{
-                table_name,
-                column_name,
-                sql_type,
-            });
-
-            if (!nullable) {
-                const default_val = get_default_value(field.type);
-                try sql.print(allocator, " DEFAULT {s}", .{default_val});
-            }
-
-            if (utils.get_field_meta(Model, field.name)) |m| {
-                if (m.is_unique and !m.is_primary_key) {
-                    try sql.print(allocator, " UNIQUE", .{});
+        if (!std.mem.eql(u8, sql_type, "SKIP")) { // Only execute if not SKIP
+            if (std.mem.eql(u8, sql_type, "BELONGS_TO")) {
+                column_name = try std.fmt.bufPrint(&column_name_buf, "{s}_id", .{field.name});
+                sql_type = "INTEGER";
+            } else {
+                const meta = utils.get_field_meta(Model, field.name);
+                if (meta) |m| {
+                    if (m.column_name) |cn| {
+                        column_name = cn;
+                    }
                 }
             }
 
-            try sql.print(allocator, ";\n", .{});
-        } else if (needs_type_update) {
-            try sql.print(allocator, "ALTER TABLE {s} ALTER COLUMN {s} TYPE {s};\n", .{
-                table_name,
-                column_name,
-                sql_type,
-            });
+            try model_columns.append(allocator, try allocator.dupe(u8, column_name));
 
-            try sql.print(allocator, "ALTER TABLE {s} ALTER COLUMN {s} ", .{
-                table_name,
-                column_name,
-            });
+            const nullable = @typeInfo(field.type) == .optional;
 
-            if (nullable) {
-                try sql.print(allocator, "DROP NOT NULL;\n", .{});
-            } else {
-                try sql.print(allocator, "SET NOT NULL;\n", .{});
+            var column_exists = false;
+            var needs_type_update = false;
+
+            for (table_info.items) |info| {
+                if (std.mem.eql(u8, info.column, column_name)) {
+                    column_exists = true;
+                    needs_type_update = !type_matches(sql_type, info.type);
+                    break;
+                }
+            }
+
+            if (!column_exists) {
+                try sql.print(allocator, "ALTER TABLE {s} ADD COLUMN {s} {s}", .{
+                    table_name,
+                    column_name,
+                    sql_type,
+                });
+
+                if (std.mem.eql(u8, utils.to_sql_type(field.type), "BELONGS_TO")) {
+                    const RelatedModel = comptime blk: {
+                        const field_type_info = @typeInfo(field.type);
+                        break :blk if (field_type_info == .optional) field_type_info.optional.child else field.type;
+                    };
+                    const related_table_name = try utils.get_table_name(allocator, RelatedModel);
+                    try sql.print(allocator, " REFERENCES {s}(id)", .{related_table_name});
+                    allocator.free(related_table_name);
+                }
+
+                if (!nullable) {
+                    const default_val = get_default_value(field.type);
+                    try sql.print(allocator, " DEFAULT {s}", .{default_val});
+                }
+
+                if (utils.get_field_meta(Model, field.name)) |m| {
+                    if (m.is_unique and !m.is_primary_key) {
+                        try sql.print(allocator, " UNIQUE", .{});
+                    }
+                }
+
+                try sql.print(allocator, ";\n", .{});
+            } else if (needs_type_update) {
+                try sql.print(allocator, "ALTER TABLE {s} ALTER COLUMN {s} TYPE {s};\n", .{
+                    table_name,
+                    column_name,
+                    sql_type,
+                });
+
+                try sql.print(allocator, "ALTER TABLE {s} ALTER COLUMN {s} ", .{
+                    table_name,
+                    column_name,
+                });
+
+                if (nullable) {
+                    try sql.print(allocator, "DROP NOT NULL;\n", .{});
+                } else {
+                    try sql.print(allocator, "SET NOT NULL;\n", .{});
+                }
             }
         }
     }
@@ -253,25 +308,6 @@ fn get_table_information(allocator: std.mem.Allocator, conn: anytype, table_name
     }
 
     return array;
-}
-
-fn to_sql_type(comptime T: type) []const u8 {
-    return switch (@typeInfo(T)) {
-        .int => |int_info| {
-            if (int_info.bits <= 32) return "INTEGER";
-            return "BIGINT";
-        },
-        .float => "REAL",
-        .bool => "BOOLEAN",
-        .pointer => |ptr_info| {
-            if (ptr_info.size == .slice and ptr_info.child == u8) {
-                return "TEXT";
-            }
-            return "BLOB";
-        },
-        .optional => |opt_info| to_sql_type(opt_info.child),
-        else => "TEXT",
-    };
 }
 
 fn type_matches(model_type: []const u8, db_type: []const u8) bool {
@@ -432,7 +468,7 @@ pub const driver = base.Driver{
     .build_create_table_query = build_create_table_query,
     .build_alter_table_query = build_alter_table_query,
     .get_table_information = get_table_information,
-    .to_sql_type = to_sql_type,
+    .to_sql_type = utils.to_sql_type,
     .type_matches = type_matches,
     .get_default_value = get_default_value,
     .ensure_migrations_table = ensure_migrations_table,

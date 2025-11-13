@@ -54,18 +54,62 @@ pub fn get_field_list(allocator: std.mem.Allocator, comptime Model: type) ![]con
     const type_info = @typeInfo(Model);
     const struct_info = type_info.@"struct";
 
-    inline for (struct_info.fields, 0..) |field, i| {
-        const meta = get_field_meta(Model, field.name);
-        const column_name = if (meta) |m| m.column_name orelse field.name else field.name;
+    var first = true;
+    inline for (struct_info.fields) |field| {
+        const sql_type = to_sql_type(field.type);
 
-        try fields.appendSlice(allocator, column_name);
+        if (!std.mem.eql(u8, sql_type, "SKIP")) {
+            if (!first) {
+                try fields.appendSlice(allocator, ", ");
+            }
+            first = false;
 
-        if (i < struct_info.fields.len - 1) {
-            try fields.appendSlice(allocator, ", ");
+            if (std.mem.eql(u8, sql_type, "BELONGS_TO")) {
+                try fields.print(allocator, "{s}_id", .{field.name});
+            } else {
+                const meta = get_field_meta(Model, field.name);
+                const column_name = if (meta) |m| m.column_name orelse field.name else field.name;
+                try fields.appendSlice(allocator, column_name);
+            }
         }
     }
 
     return fields.toOwnedSlice(allocator);
+}
+
+pub fn is_relation(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
+        .@"struct" => true,
+        .optional => |opt| is_relation(opt.child),
+        .pointer => |p| p.size == .slice and @typeInfo(p.child) == .@"struct",
+        else => false,
+    };
+}
+
+pub fn to_sql_type(comptime T: type) []const u8 {
+    const info = @typeInfo(T);
+    return switch (info) {
+        .int => |int_info| {
+            if (int_info.bits <= 32) return "INTEGER";
+            return "BIGINT";
+        },
+        .float => "REAL",
+        .bool => "BOOLEAN",
+        .pointer => |ptr_info| {
+            if (ptr_info.size == .slice) {
+                if (@typeInfo(ptr_info.child) == .@"struct") {
+                    return "SKIP"; // This is a hasMany relation
+                }
+                if (ptr_info.child == u8) {
+                    return "TEXT";
+                }
+            }
+            return "BLOB";
+        },
+        .optional => |opt_info| to_sql_type(opt_info.child),
+        .@"struct" => "BELONGS_TO",
+        else => "TEXT",
+    };
 }
 
 pub fn should_skip_field(comptime Model: type, comptime field_name: []const u8) bool {

@@ -6,6 +6,7 @@ const App = @import("app.zig");
 const routes = @import("routes.zig");
 const m = @import("orm/migrations.zig");
 const User = @import("models/user.zig");
+const Role = @import("models/role.zig");
 const pg_driver = @import("orm/drivers/pg.zig").driver;
 
 fn get_db_pool(allocator: std.mem.Allocator) !*pg.Pool {
@@ -43,6 +44,7 @@ pub fn main() !void {
             defer db.deinit();
 
             try m.make_migration(allocator, db, User, pg_driver);
+            try m.make_migration(allocator, db, Role, pg_driver);
             return;
         } else if (std.mem.eql(u8, command, "migrate")) {
             var db = try get_db_pool(allocator);

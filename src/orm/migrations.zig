@@ -25,6 +25,10 @@ pub fn make_migration(allocator: std.mem.Allocator, db: *pg.Pool, comptime Model
         try driver.build_alter_table_query(allocator, Model, table_info);
     defer allocator.free(sql);
 
+    if (sql.len == 0) {
+        return;
+    }
+
     const timestamp = std.time.timestamp();
     const migration_name = try std.fmt.allocPrint(
         allocator,
