@@ -1,3 +1,3 @@
 comptime {
-    _ = @import("orm/tests/query_builder_test.zig");
+    _ = @import("orm/tests/query_builder_select_test.zig");
 }

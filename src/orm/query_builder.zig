@@ -1,6 +1,7 @@
 const std = @import("std");
 const utils = @import("utils.zig");
 const ft = @import("fields.zig");
+const pg = @import("pg");
 
 pub fn QueryBuilder(comptime Model: type) type {
     return struct {
@@ -196,19 +197,19 @@ pub fn QueryBuilder(comptime Model: type) type {
                     switch (ptr_info.size) {
                         .slice => {
                             if (ptr_info.child == u8) {
-                                try value_str.print(self.allocator, "'{s}'", .{value});
+                                try value_str.appendSlice(self.allocator, value);
                             } else {
                                 @compileError("Unsupported slice type for WHERE value");
                             }
                         },
                         .one => {
                             if (ptr_info.child == u8) {
-                                try value_str.print(self.allocator, "'{s}'", .{value});
+                                try value_str.appendSlice(self.allocator, value);
                             } else {
                                 switch (@typeInfo(ptr_info.child)) {
                                     .array => |arr_info| {
                                         if (arr_info.child == u8) {
-                                            try value_str.print(self.allocator, "'{s}'", .{value});
+                                            try value_str.appendSlice(self.allocator, value);
                                         } else {
                                             @compileError("Unsupported array type for WHERE value");
                                         }
@@ -226,7 +227,7 @@ pub fn QueryBuilder(comptime Model: type) type {
                             .int => try value_str.print(self.allocator, "{d}", .{v}),
                             .float => try value_str.print(self.allocator, "{d}", .{v}),
                             .bool => try value_str.print(self.allocator, "{}", .{v}),
-                            .pointer => try value_str.print(self.allocator, "'{s}'", .{v}),
+                            .pointer => try value_str.appendSlice(self.allocator, v),
                             else => @compileError("Unsupported optional type for WHERE value"),
                         }
                     } else {
@@ -261,9 +262,12 @@ pub fn QueryBuilder(comptime Model: type) type {
             return false;
         }
 
-        pub fn toSql(self: *Self) ![]u8 {
+        pub fn toSql(self: *Self) !struct { sql: []u8, params: []const []const u8 } {
             var sql = std.ArrayList(u8){};
             errdefer sql.deinit(self.allocator);
+
+            var params = std.ArrayList([]const u8){};
+            errdefer params.deinit(self.allocator);
 
             try sql.print(self.allocator, "SELECT ", .{});
 
@@ -340,12 +344,15 @@ pub fn QueryBuilder(comptime Model: type) type {
                     const table_alias = try getAliasedTableName(self.allocator, condition.table_name, condition.relation_path);
                     const needs_free = condition.relation_path.len > 1;
 
-                    try sql.print(self.allocator, "{s}.{s} {s} {s}", .{
+                    try sql.print(self.allocator, "{s}.{s} {s} ${d}", .{
                         table_alias,
                         condition.column,
                         condition.operator,
-                        condition.value,
+                        params.items.len + 1,
                     });
+
+                    const param_copy = try self.allocator.dupe(u8, condition.value);
+                    try params.append(self.allocator, param_copy);
 
                     if (needs_free) {
                         self.allocator.free(table_alias);
@@ -353,7 +360,10 @@ pub fn QueryBuilder(comptime Model: type) type {
                 }
             }
 
-            return sql.toOwnedSlice(self.allocator);
+            return .{
+                .sql = try sql.toOwnedSlice(self.allocator),
+                .params = try params.toOwnedSlice(self.allocator),
+            };
         }
 
         fn getFieldValue(allocator: std.mem.Allocator, comptime T: type, row: anytype, index: usize) !T {
@@ -396,6 +406,137 @@ pub fn QueryBuilder(comptime Model: type) type {
             }
 
             return &columns;
+        }
+
+        fn prepare(self: *Self, conn: *pg.Conn) !*pg.Result {
+            const query = try self.toSql();
+            defer self.allocator.free(query.sql);
+            defer {
+                for (query.params) |param| {
+                    self.allocator.free(param);
+                }
+                self.allocator.free(query.params);
+            }
+
+            var stmt = try conn.prepare(query.sql);
+            errdefer stmt.deinit();
+
+            for (query.params) |param| {
+                try stmt.bind(param);
+            }
+
+            return try stmt.execute();
+        }
+
+        pub fn execute(self: *Self, conn: *pg.Conn) ![]Model {
+            var result = try self.prepare(conn);
+            defer result.deinit();
+
+            var results = std.ArrayList(Model){};
+            errdefer {
+                for (results.items) |item| {
+                    self.freeModel(item);
+                }
+                results.deinit(self.allocator);
+            }
+
+            while (try result.next()) |row| {
+                const model = try self.parseRow(row);
+                try results.append(self.allocator, model);
+            }
+
+            return try results.toOwnedSlice(self.allocator);
+        }
+
+        fn parseRow(self: *Self, row: anytype) !Model {
+            var model: Model = std.mem.zeroes(Model);
+
+            if (self.select_columns) |selected| {
+                var col_index: usize = 0;
+
+                for (selected) |parsed_field| {
+                    if (parsed_field.relation_path.len == 0) {
+                        inline for (@typeInfo(Model).@"struct".fields) |field| {
+                            if (std.mem.eql(u8, field.name, parsed_field.field_name)) {
+                                if (comptime utils.is_relation(field.type)) {
+                                    @field(model, field.name) = try parseRelationField(self.allocator, field.type, row, &col_index);
+                                } else {
+                                    @field(model, field.name) = try getFieldValue(self.allocator, field.type, row, col_index);
+                                    col_index += 1;
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            } else {
+                var col_index: usize = 0;
+                inline for (@typeInfo(Model).@"struct".fields) |field| {
+                    if (comptime utils.is_relation(field.type)) {
+                        @field(model, field.name) = try parseRelationField(self.allocator, field.type, row, &col_index);
+                    } else {
+                        @field(model, field.name) = try getFieldValue(self.allocator, field.type, row, col_index);
+                        col_index += 1;
+                    }
+                }
+            }
+
+            return model;
+        }
+
+        fn parseRelationField(allocator: std.mem.Allocator, comptime RelationType: type, row: anytype, col_index: *usize) !RelationType {
+            var relation_model: RelationType = std.mem.zeroes(RelationType);
+
+            inline for (@typeInfo(RelationType).@"struct".fields) |field| {
+                if (comptime utils.is_relation(field.type)) {
+                    // Nested relation - recurse deeper
+                    @field(relation_model, field.name) = try parseRelationField(allocator, field.type, row, col_index);
+                } else {
+                    @field(relation_model, field.name) = try getFieldValue(allocator, field.type, row, col_index.*);
+                    col_index.* += 1;
+                }
+            }
+
+            return relation_model;
+        }
+
+        fn freeModel(self: *Self, model: Model) void {
+            if (self.select_columns) |selected| {
+                for (selected) |parsed_field| {
+                    if (parsed_field.relation_path.len == 0) {
+                        inline for (@typeInfo(Model).@"struct".fields) |field| {
+                            if (std.mem.eql(u8, field.name, parsed_field.field_name)) {
+                                switch (@typeInfo(field.type)) {
+                                    .pointer => self.allocator.free(@field(model, field.name)),
+                                    .optional => |opt_info| {
+                                        if (@field(model, field.name)) |val| {
+                                            if (@typeInfo(opt_info.child) == .pointer) {
+                                                self.allocator.free(val);
+                                            }
+                                        }
+                                    },
+                                    else => {},
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            } else {
+                inline for (@typeInfo(Model).@"struct".fields) |field| {
+                    switch (@typeInfo(field.type)) {
+                        .pointer => self.allocator.free(@field(model, field.name)),
+                        .optional => |opt_info| {
+                            if (@field(model, field.name)) |val| {
+                                if (@typeInfo(opt_info.child) == .pointer) {
+                                    self.allocator.free(val);
+                                }
+                            }
+                        },
+                        else => {},
+                    }
+                }
+            }
         }
     };
 }

@@ -79,9 +79,9 @@ pub fn get_field_list(allocator: std.mem.Allocator, comptime Model: type) ![]con
 
 pub fn is_relation(comptime T: type) bool {
     return switch (@typeInfo(T)) {
-        .@"struct" => true,
+        .@"struct" => @hasDecl(T, "table_name") and @hasDecl(T, "field_meta"),
         .optional => |opt| is_relation(opt.child),
-        .pointer => |p| p.size == .slice and @typeInfo(p.child) == .@"struct",
+        .pointer => |p| p.size == .slice and is_relation(p.child),
         else => false,
     };
 }

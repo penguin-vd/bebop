@@ -115,8 +115,8 @@ pub fn build_create_table_query(
 
                 switch (@typeInfo(RelatedModel)) {
                     .@"struct" => {
-                        const related_table_name = if (@typeInfo(RelatedModel).@"struct" and @hasDecl(RelatedModel, "table_name"))
-                            Model.table_name
+                        const related_table_name = if (@hasDecl(RelatedModel, "table_name"))
+                            RelatedModel.table_name
                         else
                             unreachable;
                         try sql.print(allocator, " REFERENCES {s}(id)", .{related_table_name});
@@ -242,8 +242,8 @@ pub fn build_alter_table_query(
 
                     switch (@typeInfo(RelatedModel)) {
                         .@"struct" => {
-                            const related_table_name = if (@typeInfo(RelatedModel).@"struct" and @hasDecl(RelatedModel, "table_name"))
-                                Model.table_name
+                            const related_table_name = if (@hasDecl(RelatedModel, "table_name"))
+                                RelatedModel.table_name
                             else
                                 unreachable;
                             try sql.print(allocator, " REFERENCES {s}(id)", .{related_table_name});

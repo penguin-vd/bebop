@@ -116,15 +116,22 @@ test "where with multiple conditions and different types" {
     _ = qb.select();
     _ = try qb.where("age", ">", 18);
     _ = try qb.where("name", "=", "Bob");
-    const sql = try qb.toSql();
-    defer allocator.free(sql);
+    const result = try qb.toSql();
+    defer allocator.free(result.sql);
+    defer {
+        for (result.params) |param| {
+            allocator.free(param);
+        }
+        allocator.free(result.params);
+    }
 
-    try std.testing.expectEqualStrings(
-        "SELECT users.id, users.name, users.age " ++
+    try std.testing.expectEqualStrings("SELECT users.id, users.name, users.age " ++
         "FROM users " ++
-        "WHERE users.age > 18 AND users.name = 'Bob'",
-        sql
-    );
+        "WHERE users.age > $1 AND users.name = $2", result.sql);
+
+    try std.testing.expectEqual(@as(usize, 2), result.params.len);
+    try std.testing.expectEqualStrings("18", result.params[0]);
+    try std.testing.expectEqualStrings("Bob", result.params[1]);
 }
 
 test "where with float and boolean values" {
@@ -136,15 +143,22 @@ test "where with float and boolean values" {
     _ = qb.select();
     _ = try qb.where("price", ">=", 10.99);
     _ = try qb.where("in_stock", "=", true);
-    const sql = try qb.toSql();
-    defer allocator.free(sql);
+    const result = try qb.toSql();
+    defer allocator.free(result.sql);
+    defer {
+        for (result.params) |param| {
+            allocator.free(param);
+        }
+        allocator.free(result.params);
+    }
 
-    try std.testing.expectEqualStrings(
-        "SELECT products.id, products.price, products.in_stock " ++
+    try std.testing.expectEqualStrings("SELECT products.id, products.price, products.in_stock " ++
         "FROM products " ++
-        "WHERE products.price >= 10.99 AND products.in_stock = true",
-        sql
-    );
+        "WHERE products.price >= $1 AND products.in_stock = $2", result.sql);
+
+    try std.testing.expectEqual(@as(usize, 2), result.params.len);
+    try std.testing.expectEqualStrings("10.99", result.params[0]);
+    try std.testing.expectEqualStrings("true", result.params[1]);
 }
 
 test "selectFields with where clause" {
@@ -156,15 +170,21 @@ test "selectFields with where clause" {
     const fields = [_][]const u8{ "name", "age" };
     _ = try qb.selectFields(&fields);
     _ = try qb.where("id", "=", 1);
-    const sql = try qb.toSql();
-    defer allocator.free(sql);
+    const result = try qb.toSql();
+    defer allocator.free(result.sql);
+    defer {
+        for (result.params) |param| {
+            allocator.free(param);
+        }
+        allocator.free(result.params);
+    }
 
-    try std.testing.expectEqualStrings(
-        "SELECT users.name, users.age " ++
+    try std.testing.expectEqualStrings("SELECT users.name, users.age " ++
         "FROM users " ++
-        "WHERE users.id = 1",
-        sql
-    );
+        "WHERE users.id = $1", result.sql);
+
+    try std.testing.expectEqual(@as(usize, 1), result.params.len);
+    try std.testing.expectEqualStrings("1", result.params[0]);
 }
 
 test "select specific field on relation" {
@@ -176,15 +196,20 @@ test "select specific field on relation" {
     const fields = [_][]const u8{ "id", "category.name" };
     _ = try qb.selectFields(&fields);
 
-    const sql = try qb.toSql();
-    defer allocator.free(sql);
+    const result = try qb.toSql();
+    defer allocator.free(result.sql);
+    defer {
+        for (result.params) |param| {
+            allocator.free(param);
+        }
+        allocator.free(result.params);
+    }
 
-    try std.testing.expectEqualStrings(
-        "SELECT products.id, categories.name " ++
+    try std.testing.expectEqualStrings("SELECT products.id, categories.name " ++
         "FROM products " ++
-        "LEFT JOIN categories ON products.category_id = categories.id",
-        sql
-    );
+        "LEFT JOIN categories ON products.category_id = categories.id", result.sql);
+
+    try std.testing.expectEqual(@as(usize, 0), result.params.len);
 }
 
 test "nested relations" {
@@ -196,16 +221,21 @@ test "nested relations" {
     const fields = [_][]const u8{ "id", "category.parent.name" };
     _ = try qb.selectFields(&fields);
 
-    const sql = try qb.toSql();
-    defer allocator.free(sql);
+    const result = try qb.toSql();
+    defer allocator.free(result.sql);
+    defer {
+        for (result.params) |param| {
+            allocator.free(param);
+        }
+        allocator.free(result.params);
+    }
 
-    try std.testing.expectEqualStrings(
-        "SELECT products.id, categories_parent.name " ++
+    try std.testing.expectEqualStrings("SELECT products.id, categories_parent.name " ++
         "FROM products " ++
         "LEFT JOIN categories ON products.category_id = categories.id " ++
-        "LEFT JOIN categories AS categories_parent ON categories.parent_id = categories_parent.id",
-        sql
-    );
+        "LEFT JOIN categories AS categories_parent ON categories.parent_id = categories_parent.id", result.sql);
+
+    try std.testing.expectEqual(@as(usize, 0), result.params.len);
 }
 
 test "only join relations that are selected" {
@@ -217,15 +247,20 @@ test "only join relations that are selected" {
     const fields = [_][]const u8{ "id", "category.name" };
     _ = try qb.selectFields(&fields);
 
-    const sql = try qb.toSql();
-    defer allocator.free(sql);
+    const result = try qb.toSql();
+    defer allocator.free(result.sql);
+    defer {
+        for (result.params) |param| {
+            allocator.free(param);
+        }
+        allocator.free(result.params);
+    }
 
-    try std.testing.expectEqualStrings(
-        "SELECT products.id, categories.name " ++
+    try std.testing.expectEqualStrings("SELECT products.id, categories.name " ++
         "FROM products " ++
-        "LEFT JOIN categories ON products.category_id = categories.id",
-        sql
-    );
+        "LEFT JOIN categories ON products.category_id = categories.id", result.sql);
+
+    try std.testing.expectEqual(@as(usize, 0), result.params.len);
 }
 
 test "select from nested relation without intermediate fields" {
@@ -237,16 +272,21 @@ test "select from nested relation without intermediate fields" {
     const fields = [_][]const u8{ "id", "category.parent.name" };
     _ = try qb.selectFields(&fields);
 
-    const sql = try qb.toSql();
-    defer allocator.free(sql);
+    const result = try qb.toSql();
+    defer allocator.free(result.sql);
+    defer {
+        for (result.params) |param| {
+            allocator.free(param);
+        }
+        allocator.free(result.params);
+    }
 
-    try std.testing.expectEqualStrings(
-        "SELECT products.id, categories_parent.name " ++
+    try std.testing.expectEqualStrings("SELECT products.id, categories_parent.name " ++
         "FROM products " ++
         "LEFT JOIN categories ON products.category_id = categories.id " ++
-        "LEFT JOIN categories AS categories_parent ON categories.parent_id = categories_parent.id",
-        sql
-    );
+        "LEFT JOIN categories AS categories_parent ON categories.parent_id = categories_parent.id", result.sql);
+
+    try std.testing.expectEqual(@as(usize, 0), result.params.len);
 }
 
 test "filter by relation field" {
@@ -257,17 +297,23 @@ test "filter by relation field" {
 
     _ = qb.select();
     _ = try qb.where("category.id", "=", 5);
-    const sql = try qb.toSql();
-    defer allocator.free(sql);
+    const result = try qb.toSql();
+    defer allocator.free(result.sql);
+    defer {
+        for (result.params) |param| {
+            allocator.free(param);
+        }
+        allocator.free(result.params);
+    }
 
-    try std.testing.expectEqualStrings(
-        "SELECT products.id, categories.id, categories.name, suppliers.id, suppliers.company_name " ++
+    try std.testing.expectEqualStrings("SELECT products.id, categories.id, categories.name, suppliers.id, suppliers.company_name " ++
         "FROM products " ++
         "LEFT JOIN categories ON products.category_id = categories.id " ++
         "LEFT JOIN suppliers ON products.supplier_id = suppliers.id " ++
-        "WHERE categories.id = 5",
-        sql
-    );
+        "WHERE categories.id = $1", result.sql);
+
+    try std.testing.expectEqual(@as(usize, 1), result.params.len);
+    try std.testing.expectEqualStrings("5", result.params[0]);
 }
 
 test "filter by nested relation field" {
@@ -278,15 +324,21 @@ test "filter by nested relation field" {
 
     _ = qb.select();
     _ = try qb.where("category.parent.id", "=", 5);
-    const sql = try qb.toSql();
-    defer allocator.free(sql);
+    const result = try qb.toSql();
+    defer allocator.free(result.sql);
+    defer {
+        for (result.params) |param| {
+            allocator.free(param);
+        }
+        allocator.free(result.params);
+    }
 
-    try std.testing.expectEqualStrings(
-        "SELECT products.id, categories_parent.id, categories_parent.name, categories.id, categories.name " ++
+    try std.testing.expectEqualStrings("SELECT products.id, categories_parent.id, categories_parent.name, categories.id, categories.name " ++
         "FROM products " ++
         "LEFT JOIN categories ON products.category_id = categories.id " ++
         "LEFT JOIN categories AS categories_parent ON categories.parent_id = categories_parent.id " ++
-        "WHERE categories_parent.id = 5",
-        sql
-    );
+        "WHERE categories_parent.id = $1", result.sql);
+
+    try std.testing.expectEqual(@as(usize, 1), result.params.len);
+    try std.testing.expectEqualStrings("5", result.params[0]);
 }
