@@ -1,11 +1,10 @@
 const App = @import("app.zig");
 const std = @import("std");
 const httpz = @import("httpz");
+const bebop = @import("lib/bebop.zig");
 
-const QueryBuilder = @import("orm/query_builder.zig").QueryBuilder;
 const Product = @import("models/product.zig");
 const Category = @import("models/category.zig");
-const utils = @import("orm/utils.zig");
 
 pub const Router = httpz.Router(*App, *const fn (*App.RequestContext, *httpz.Request, *httpz.Response) anyerror!void);
 
@@ -16,9 +15,9 @@ pub fn register(router: *Router) !void {
 
 pub fn btest(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Response) !void {
     var conn = try ctx.app.db.acquire();
-    defer conn.deinit();
+    defer conn.release();
 
-    var qb = QueryBuilder(Product).init(res.arena);
+    var qb = bebop.orm.QueryBuilder(Product).init(res.arena);
     defer qb.deinit();
 
     const fields = [_][]const u8{ "name" };
@@ -42,7 +41,7 @@ pub fn health_check(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.R
     _ = req;
 
     var conn = try ctx.app.db.acquire();
-    defer conn.deinit();
+    defer conn.release();
 
     try res.json(.{ .success = true }, .{});
 }

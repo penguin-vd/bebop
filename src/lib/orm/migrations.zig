@@ -3,6 +3,21 @@ const pg = @import("pg");
 const utils = @import("utils.zig");
 const queries = @import("queries.zig");
 
+pub fn make_migrations(allocator: std.mem.Allocator, db: *pg.Pool, comptime models: []const type) !void {
+    if (models.len == 0) {
+        std.debug.print("No models provided.\n", .{});
+        return;
+    }
+
+    std.fs.cwd().makeDir("migrations") catch |err| {
+        if (err != error.PathAlreadyExists) return err;
+    };
+
+    inline for (models) |Model| {
+        try make_migration(allocator, db, Model);
+    }
+}
+
 pub fn make_migration(allocator: std.mem.Allocator, db: *pg.Pool, comptime Model: type) !void {
     var conn = try db.acquire();
     defer conn.release();
@@ -28,6 +43,7 @@ pub fn make_migration(allocator: std.mem.Allocator, db: *pg.Pool, comptime Model
     defer allocator.free(sql);
 
     if (sql.len == 0) {
+        std.debug.print("No changes needed for table: {s}\n", .{table_name});
         return;
     }
 
@@ -43,7 +59,6 @@ pub fn make_migration(allocator: std.mem.Allocator, db: *pg.Pool, comptime Model
         allocator,
         &[_][]const u8{ "migrations", migration_name },
     );
-
     defer allocator.free(file_path);
 
     const file = try std.fs.cwd().createFile(file_path, .{});

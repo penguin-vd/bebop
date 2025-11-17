@@ -4,7 +4,7 @@ const pg = @import("pg");
 
 const App = @import("app.zig");
 const routes = @import("routes.zig");
-const m = @import("orm/migrations.zig");
+const m = @import("lib/bebop.zig").orm.migrations;
 
 const Product = @import("models/product.zig");
 const Category = @import("models/category.zig");
@@ -43,8 +43,10 @@ pub fn main() !void {
             var db = try get_db_pool(allocator);
             defer db.deinit();
 
-            try m.make_migration(allocator, db, Category);
-            try m.make_migration(allocator, db, Product);
+            try m.make_migrations(allocator, db, &[_]type{
+                Category,
+                Product,
+            });
             return;
         } else if (std.mem.eql(u8, command, "migrate")) {
             var db = try get_db_pool(allocator);
