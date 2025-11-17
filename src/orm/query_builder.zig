@@ -259,6 +259,12 @@ pub fn QueryBuilder(comptime Model: type) type {
                 }
             }
 
+            for (self.where_conditions.items) |cond| {
+                if (std.mem.eql(u8, cond.table_name, join_table_name)) {
+                    return true;
+                }
+            }
+
             return false;
         }
 
@@ -428,35 +434,35 @@ pub fn QueryBuilder(comptime Model: type) type {
             return try stmt.execute();
         }
 
-        pub fn execute(self: *Self, conn: *pg.Conn) ![]Model {
+        pub fn execute(self: *Self, conn: *pg.Conn, comptime ResultType: type) ![]ResultType {
             var result = try self.prepare(conn);
             defer result.deinit();
 
-            var results = std.ArrayList(Model){};
+            var results = std.ArrayList(ResultType){};
             errdefer {
                 for (results.items) |item| {
-                    self.freeModel(item);
+                    self.freeModel(ResultType, item);
                 }
                 results.deinit(self.allocator);
             }
 
             while (try result.next()) |row| {
-                const model = try self.parseRow(row);
+                const model = try self.parseRow(row, ResultType);
                 try results.append(self.allocator, model);
             }
 
             return try results.toOwnedSlice(self.allocator);
         }
 
-        fn parseRow(self: *Self, row: anytype) !Model {
-            var model: Model = std.mem.zeroes(Model);
+        fn parseRow(self: *Self, row: anytype, comptime ResultType: type) !ResultType {
+            var model = std.mem.zeroes(ResultType);
 
             if (self.select_columns) |selected| {
                 var col_index: usize = 0;
 
                 for (selected) |parsed_field| {
                     if (parsed_field.relation_path.len == 0) {
-                        inline for (@typeInfo(Model).@"struct".fields) |field| {
+                        inline for (@typeInfo(ResultType).@"struct".fields) |field| {
                             if (std.mem.eql(u8, field.name, parsed_field.field_name)) {
                                 if (comptime utils.is_relation(field.type)) {
                                     @field(model, field.name) = try parseRelationField(self.allocator, field.type, row, &col_index);
@@ -471,7 +477,7 @@ pub fn QueryBuilder(comptime Model: type) type {
                 }
             } else {
                 var col_index: usize = 0;
-                inline for (@typeInfo(Model).@"struct".fields) |field| {
+                inline for (@typeInfo(ResultType).@"struct".fields) |field| {
                     if (comptime utils.is_relation(field.type)) {
                         @field(model, field.name) = try parseRelationField(self.allocator, field.type, row, &col_index);
                     } else {
@@ -500,11 +506,11 @@ pub fn QueryBuilder(comptime Model: type) type {
             return relation_model;
         }
 
-        fn freeModel(self: *Self, model: Model) void {
+        fn freeModel(self: *Self, comptime ResultType: type, model: ResultType) void {
             if (self.select_columns) |selected| {
                 for (selected) |parsed_field| {
                     if (parsed_field.relation_path.len == 0) {
-                        inline for (@typeInfo(Model).@"struct".fields) |field| {
+                        inline for (@typeInfo(ResultType).@"struct".fields) |field| {
                             if (std.mem.eql(u8, field.name, parsed_field.field_name)) {
                                 switch (@typeInfo(field.type)) {
                                     .pointer => self.allocator.free(@field(model, field.name)),
@@ -523,9 +529,11 @@ pub fn QueryBuilder(comptime Model: type) type {
                     }
                 }
             } else {
-                inline for (@typeInfo(Model).@"struct".fields) |field| {
+                inline for (@typeInfo(ResultType).@"struct".fields) |field| {
                     switch (@typeInfo(field.type)) {
-                        .pointer => self.allocator.free(@field(model, field.name)),
+                        .pointer => {
+                            self.allocator.free(@field(model, field.name));
+                        },
                         .optional => |opt_info| {
                             if (@field(model, field.name)) |val| {
                                 if (@typeInfo(opt_info.child) == .pointer) {

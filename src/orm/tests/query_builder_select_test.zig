@@ -342,3 +342,61 @@ test "filter by nested relation field" {
     try std.testing.expectEqual(@as(usize, 1), result.params.len);
     try std.testing.expectEqualStrings("5", result.params[0]);
 }
+
+
+test "filter by relation only selecting field on single" {
+    const allocator = std.testing.allocator;
+
+    var qb = QueryBuilder(ProductWithRelations).init(allocator);
+    defer qb.deinit();
+
+    const fields = [_][]const u8{ "id" };
+    _ = try qb.selectFields(&fields);
+
+    _ = try qb.where("category.id", "=", 1);
+
+    const result = try qb.toSql();
+    defer allocator.free(result.sql);
+    defer {
+        for (result.params) |param| {
+            allocator.free(param);
+        }
+        allocator.free(result.params);
+    }
+
+    try std.testing.expectEqualStrings("SELECT products.id " ++
+        "FROM products " ++
+        "LEFT JOIN categories ON products.category_id = categories.id " ++
+        "WHERE categories.id = $1", result.sql);
+
+    try std.testing.expectEqual(@as(usize, 1), result.params.len);
+}
+
+test "filter by nested relation only selecting field on single" {
+    const allocator = std.testing.allocator;
+
+    var qb = QueryBuilder(ProductWithNestedRelation).init(allocator);
+    defer qb.deinit();
+
+    const fields = [_][]const u8{ "id" };
+    _ = try qb.selectFields(&fields);
+
+    _ = try qb.where("category.parent.id", "=", 5);
+
+    const result = try qb.toSql();
+    defer allocator.free(result.sql);
+    defer {
+        for (result.params) |param| {
+            allocator.free(param);
+        }
+        allocator.free(result.params);
+    }
+
+    try std.testing.expectEqualStrings("SELECT products.id " ++
+        "FROM products " ++
+        "LEFT JOIN categories ON products.category_id = categories.id " ++
+        "LEFT JOIN categories AS categories_parent ON categories.parent_id = categories_parent.id " ++
+        "WHERE categories_parent.id = $1", result.sql);
+
+    try std.testing.expectEqual(@as(usize, 1), result.params.len);
+}
