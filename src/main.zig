@@ -4,63 +4,21 @@ const pg = @import("pg");
 
 const App = @import("app.zig");
 const routes = @import("routes.zig");
-const m = @import("lib/bebop.zig").orm.migrations;
+const bebop = @import("lib/bebop.zig");
 
 const Product = @import("models/product.zig");
 const Category = @import("models/category.zig");
-
-fn get_db_pool(allocator: std.mem.Allocator) !*pg.Pool {
-    var env_map = try std.process.getEnvMap(allocator);
-    defer env_map.deinit();
-
-    return try pg.Pool.init(
-        allocator,
-        .{
-            .connect = .{
-                .port = try std.fmt.parseInt(u16, env_map.get("POSTGRES_PORT") orelse "5432", 10),
-                .host = env_map.get("POSTGRES_HOST") orelse "postgres",
-            },
-            .auth = .{
-                .username = env_map.get("POSTGRES_USER").?,
-                .database = env_map.get("POSTGRES_DATABASE").?,
-                .password = env_map.get("POSTGRES_PASSWORD").?,
-            },
-        },
-    );
-}
+const CreateMigrations = @import("commands/migrations/create.zig");
+const cmd = @import("commands/cmd.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
     defer _ = gpa.deinit();
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    try cmd.handle(allocator);
 
-    if (args.len > 1) {
-        const command = args[1];
-        if (std.mem.eql(u8, command, "makemigrations")) {
-            var db = try get_db_pool(allocator);
-            defer db.deinit();
-
-            try m.make_migrations(allocator, db, &[_]type{
-                Category,
-                Product,
-            });
-            return;
-        } else if (std.mem.eql(u8, command, "migrate")) {
-            var db = try get_db_pool(allocator);
-            defer db.deinit();
-
-            try m.migrate(allocator, db);
-            return;
-        } else {
-            std.debug.print("Unknown command: {s}\n", .{command});
-            return;
-        }
-    }
-
-    var db = try get_db_pool(allocator);
+    var db = try bebop.db.get_pool(allocator);
     defer db.deinit();
 
     var app = App{
