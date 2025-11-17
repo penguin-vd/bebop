@@ -68,12 +68,11 @@ pub fn QueryBuilder(comptime Model: type) type {
             self.where_conditions.deinit(self.allocator);
         }
 
-        pub fn select(self: *Self) *Self {
+        pub fn select(self: *Self) void {
             if (self.select_columns) |columns| {
                 self.allocator.free(columns);
             }
             self.select_columns = null;
-            return self;
         }
 
         fn getAliasedTableName(allocator: std.mem.Allocator, base_table: []const u8, relation_path: []const []const u8) ![]const u8 {
@@ -159,7 +158,7 @@ pub fn QueryBuilder(comptime Model: type) type {
             return try parseFieldNameRecursive(allocator, Model, field_str, null);
         }
 
-        pub fn selectFields(self: *Self, field_names: []const []const u8) !*Self {
+        pub fn selectFields(self: *Self, field_names: []const []const u8) !void {
             if (self.select_columns) |columns| {
                 self.allocator.free(columns);
             }
@@ -173,10 +172,9 @@ pub fn QueryBuilder(comptime Model: type) type {
             }
 
             self.select_columns = try parsed_fields.toOwnedSlice(self.allocator);
-            return self;
         }
 
-        pub fn where(self: *Self, field_name: []const u8, operator: []const u8, value: anytype) !*Self {
+        pub fn where(self: *Self, field_name: []const u8, operator: []const u8, value: anytype) !void {
             const parsed = try parseFieldName(self.allocator, field_name);
 
             var value_str = std.ArrayList(u8){};
@@ -244,8 +242,6 @@ pub fn QueryBuilder(comptime Model: type) type {
                 .value = try value_str.toOwnedSlice(self.allocator),
                 .relation_path = parsed.relation_path,
             });
-
-            return self;
         }
 
         fn isRelationInUse(self: *Self, join_table_name: []const u8) bool {

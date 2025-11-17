@@ -21,13 +21,13 @@ pub fn btest(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Response
     defer qb.deinit();
 
     const fields = [_][]const u8{ "name" };
-    _ = try qb.selectFields(&fields);
+    try qb.selectFields(&fields);
     
     var query = try req.query();
     defer query.deinit(req.arena);
 
     if (query.get("category_id")) |id| {
-        _ = try qb.where("category.id", "=", id);
+        try qb.where("category.id", "=", id);
     }
 
     const users = try qb.execute(conn, struct {

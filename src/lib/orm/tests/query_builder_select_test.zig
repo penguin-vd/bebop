@@ -113,9 +113,9 @@ test "where with multiple conditions and different types" {
     var qb = QueryBuilder(User).init(allocator);
     defer qb.deinit();
 
-    _ = qb.select();
-    _ = try qb.where("age", ">", 18);
-    _ = try qb.where("name", "=", "Bob");
+    qb.select();
+    try qb.where("age", ">", 18);
+    try qb.where("name", "=", "Bob");
     const result = try qb.toSql();
     defer allocator.free(result.sql);
     defer {
@@ -140,9 +140,9 @@ test "where with float and boolean values" {
     var qb = QueryBuilder(Product).init(allocator);
     defer qb.deinit();
 
-    _ = qb.select();
-    _ = try qb.where("price", ">=", 10.99);
-    _ = try qb.where("in_stock", "=", true);
+    qb.select();
+    try qb.where("price", ">=", 10.99);
+    try qb.where("in_stock", "=", true);
     const result = try qb.toSql();
     defer allocator.free(result.sql);
     defer {
@@ -168,8 +168,8 @@ test "selectFields with where clause" {
     defer qb.deinit();
 
     const fields = [_][]const u8{ "name", "age" };
-    _ = try qb.selectFields(&fields);
-    _ = try qb.where("id", "=", 1);
+    try qb.selectFields(&fields);
+    try qb.where("id", "=", 1);
     const result = try qb.toSql();
     defer allocator.free(result.sql);
     defer {
@@ -194,7 +194,7 @@ test "select specific field on relation" {
     defer qb.deinit();
 
     const fields = [_][]const u8{ "id", "category.name" };
-    _ = try qb.selectFields(&fields);
+    try qb.selectFields(&fields);
 
     const result = try qb.toSql();
     defer allocator.free(result.sql);
@@ -219,7 +219,7 @@ test "nested relations" {
     defer qb.deinit();
 
     const fields = [_][]const u8{ "id", "category.parent.name" };
-    _ = try qb.selectFields(&fields);
+    try qb.selectFields(&fields);
 
     const result = try qb.toSql();
     defer allocator.free(result.sql);
@@ -245,7 +245,7 @@ test "only join relations that are selected" {
     defer qb.deinit();
 
     const fields = [_][]const u8{ "id", "category.name" };
-    _ = try qb.selectFields(&fields);
+    try qb.selectFields(&fields);
 
     const result = try qb.toSql();
     defer allocator.free(result.sql);
@@ -270,7 +270,7 @@ test "select from nested relation without intermediate fields" {
     defer qb.deinit();
 
     const fields = [_][]const u8{ "id", "category.parent.name" };
-    _ = try qb.selectFields(&fields);
+    try qb.selectFields(&fields);
 
     const result = try qb.toSql();
     defer allocator.free(result.sql);
@@ -295,8 +295,8 @@ test "filter by relation field" {
     var qb = QueryBuilder(ProductWithRelations).init(allocator);
     defer qb.deinit();
 
-    _ = qb.select();
-    _ = try qb.where("category.id", "=", 5);
+    qb.select();
+    try qb.where("category.id", "=", 5);
     const result = try qb.toSql();
     defer allocator.free(result.sql);
     defer {
@@ -322,8 +322,8 @@ test "filter by nested relation field" {
     var qb = QueryBuilder(ProductWithNestedRelation).init(allocator);
     defer qb.deinit();
 
-    _ = qb.select();
-    _ = try qb.where("category.parent.id", "=", 5);
+    qb.select();
+    try qb.where("category.parent.id", "=", 5);
     const result = try qb.toSql();
     defer allocator.free(result.sql);
     defer {
@@ -343,17 +343,16 @@ test "filter by nested relation field" {
     try std.testing.expectEqualStrings("5", result.params[0]);
 }
 
-
 test "filter by relation only selecting field on single" {
     const allocator = std.testing.allocator;
 
     var qb = QueryBuilder(ProductWithRelations).init(allocator);
     defer qb.deinit();
 
-    const fields = [_][]const u8{ "id" };
-    _ = try qb.selectFields(&fields);
+    const fields = [_][]const u8{"id"};
+    try qb.selectFields(&fields);
 
-    _ = try qb.where("category.id", "=", 1);
+    try qb.where("category.id", "=", 1);
 
     const result = try qb.toSql();
     defer allocator.free(result.sql);
@@ -378,10 +377,10 @@ test "filter by nested relation only selecting field on single" {
     var qb = QueryBuilder(ProductWithNestedRelation).init(allocator);
     defer qb.deinit();
 
-    const fields = [_][]const u8{ "id" };
-    _ = try qb.selectFields(&fields);
+    const fields = [_][]const u8{"id"};
+    try qb.selectFields(&fields);
 
-    _ = try qb.where("category.parent.id", "=", 5);
+    try qb.where("category.parent.id", "=", 5);
 
     const result = try qb.toSql();
     defer allocator.free(result.sql);
