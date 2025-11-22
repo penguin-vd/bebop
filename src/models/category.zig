@@ -1,6 +1,6 @@
 const orm = @import("../lib/bebop.zig").orm;
 
-id: i32,
+id: i32 = 0,
 name: []const u8,
 
 pub const table_name = "categories";

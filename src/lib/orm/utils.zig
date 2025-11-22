@@ -328,3 +328,24 @@ pub fn get_default_value(comptime T: type) []const u8 {
         else => "''",
     };
 }
+
+pub fn is_primary_key(comptime Model: type, comptime field_name: []const u8) bool {
+    if (@hasDecl(Model, "field_meta")) {
+        const meta = @field(Model.field_meta, field_name);
+        if (@hasField(@TypeOf(meta), "is_primary_key")) {
+            return meta.is_primary_key;
+        }
+    }
+    return false;
+}
+
+pub fn is_falsy(comptime T: type, value: T) bool {
+    return switch (@typeInfo(T)) {
+        .int => value == 0,
+        .float => value == 0,
+        .bool => value,
+        .pointer => false,
+        .optional => if (value) |actual| is_relation(actual) else false,
+        else => false,
+    };
+}

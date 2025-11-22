@@ -17,12 +17,12 @@ pub fn btest(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Response
     var conn = try ctx.app.db.acquire();
     defer conn.release();
 
-    var qb = bebop.orm.QueryBuilder(Product).init(res.arena);
+    var em = bebop.orm.EntityManager(Product).init(res.arena, conn);
+    defer em.deinit();
+
+    var qb = em.query();
     defer qb.deinit();
 
-    const fields = [_][]const u8{ "name" };
-    try qb.selectFields(&fields);
-    
     var query = try req.query();
     defer query.deinit(req.arena);
 
@@ -30,11 +30,18 @@ pub fn btest(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Response
         try qb.where("category.id", "=", id);
     }
 
-    const users = try qb.execute(conn, struct {
-        name: []const u8,
-    });
+    var product = Product{
+        .name = "First try this one!",
+        .category = .{
+            .name = "Catch these hands",
+        },
+    };
 
-    try res.json(users, .{});
+    try em.persist(&product);
+
+    try em.flush();
+
+    try res.json(product, .{});
 }
 
 pub fn health_check(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Response) !void {
