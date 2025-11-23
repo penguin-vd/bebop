@@ -51,7 +51,7 @@ fn list(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Response) !vo
     }
 
     const products = try em.find(&qb);
-    defer res.arena.free(products);
+    defer em.freeModels(products);
 
     try res.json(products, .{});
 }
@@ -78,6 +78,8 @@ fn create(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Response) !
         const found_category = try category_em.get(dto.category);
 
         if (found_category) |category| {
+            defer category_em.freeModel(category);
+
             const product = try em.create(.{
                 .name = dto.name,
                 .category = category.*,
@@ -107,6 +109,7 @@ fn get(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Response) !voi
     const found = try em.get(req.param("id"));
 
     if (found) |product| {
+        defer em.freeModel(product);
         try res.json(product, .{});
         return;
     }
@@ -133,6 +136,7 @@ fn update(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Response) !
     if (body) |dto| {
         const found = try em.get(req.param("id"));
         if (found) |product| {
+            defer em.freeModel(product);
             if (dto.name) |name| {
                 product.name = name;
             }
@@ -174,6 +178,7 @@ fn delete(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Response) !
     const found = try em.get(req.param("id"));
 
     if (found) |product| {
+        defer em.freeModel(product);
         try em.remove(product);
 
         try em.flush();
