@@ -20,17 +20,35 @@ pub fn register(router: *Router) void {
 }
 
 fn list(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Response) !void {
-    // TODO: add filtering
-    _ = req;
-
     var conn = try ctx.app.db.acquire();
     defer conn.release();
 
     var em = bebop.orm.EntityManager(Product).init(res.arena, conn);
     defer em.deinit();
 
+    var query_params = try req.query();
+    defer query_params.deinit(req.arena);
+
     var qb = em.query();
     defer qb.deinit();
+
+    qb.limit = 10;
+
+    if (query_params.get("page")) |page| {
+        qb.page = std.fmt.parseInt(usize, page, 10) catch {
+            res.setStatus(.bad_request);
+            try res.json(.{ .message = "Page needs to be a signed integer" }, .{});
+            return;
+        };
+    }
+
+    if (query_params.get("limit")) |limit| {
+        qb.limit = std.fmt.parseInt(usize, limit, 10) catch {
+            res.setStatus(.bad_request);
+            try res.json(.{ .message = "Limit needs to be a signed integer" }, .{});
+            return;
+        };
+    }
 
     const products = try em.find(&qb);
     defer res.arena.free(products);
@@ -60,9 +78,10 @@ fn create(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Response) !
         const found_category = try category_em.get(dto.category);
 
         if (found_category) |category| {
-            var product = Product{ .name = dto.name, .category = category.* };
-
-            try em.persist(&product);
+            const product = try em.create(.{
+                .name = dto.name,
+                .category = category.*,
+            });
             try em.flush();
 
             try res.json(product, .{});

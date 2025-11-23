@@ -399,3 +399,54 @@ test "filter by nested relation only selecting field on single" {
 
     try std.testing.expectEqual(@as(usize, 1), result.params.len);
 }
+
+test "test limit" {
+    const allocator = std.testing.allocator;
+
+    var qb = QueryBuilder(User).init(allocator);
+    defer qb.deinit();
+
+    qb.select();
+    qb.limit = 3;
+
+    const result = try qb.toSql();
+    defer allocator.free(result.sql);
+    defer {
+        for (result.params) |param| {
+            allocator.free(param);
+        }
+        allocator.free(result.params);
+    }
+
+    try std.testing.expectEqualStrings("SELECT users.id, users.name, users.age " ++
+        "FROM users " ++
+        "LIMIT 3 OFFSET 0", result.sql);
+
+    try std.testing.expectEqual(@as(usize, 0), result.params.len);
+}
+
+test "test page" {
+    const allocator = std.testing.allocator;
+
+    var qb = QueryBuilder(User).init(allocator);
+    defer qb.deinit();
+
+    qb.select();
+    qb.limit = 3;
+    qb.page = 2;
+
+    const result = try qb.toSql();
+    defer allocator.free(result.sql);
+    defer {
+        for (result.params) |param| {
+            allocator.free(param);
+        }
+        allocator.free(result.params);
+    }
+
+    try std.testing.expectEqualStrings("SELECT users.id, users.name, users.age " ++
+        "FROM users " ++
+        "LIMIT 3 OFFSET 6", result.sql);
+
+    try std.testing.expectEqual(@as(usize, 0), result.params.len);
+}

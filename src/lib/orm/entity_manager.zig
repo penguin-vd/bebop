@@ -11,7 +11,12 @@ pub fn EntityManager(comptime Model: type) type {
         allocator: std.mem.Allocator,
         conn: *pg.Conn,
 
-        tracked_entities: std.AutoHashMap(*Model, EntityState),
+        tracked_entities: std.AutoHashMap(i32, EntityEntry),
+
+        const EntityEntry = struct {
+            entity: *Model,
+            state: EntityState,
+        };
 
         const EntityState = enum {
             new,
@@ -23,16 +28,34 @@ pub fn EntityManager(comptime Model: type) type {
             return .{
                 .allocator = allocator,
                 .conn = conn,
-                .tracked_entities = std.AutoHashMap(*Model, EntityState).init(allocator),
+                .tracked_entities = .init(allocator),
             };
         }
 
         pub fn deinit(self: *Self) void {
-            var it = self.tracked_entities.keyIterator();
-            while (it.next()) |entity_ptr| {
-                self.allocator.destroy(entity_ptr.*);
+            var it = self.tracked_entities.valueIterator();
+            while (it.next()) |entry| {
+                self.allocator.destroy(entry.entity);
             }
             self.tracked_entities.deinit();
+        }
+
+        fn getPrimaryKey(entity: *const Model) i32 {
+            const struct_info = @typeInfo(Model).@"struct";
+            inline for (struct_info.fields) |field| {
+                if (utils.get_field_meta(Model, field.name)) |meta| {
+                    if (meta.is_primary_key) {
+                        switch (@typeInfo(field.type)) {
+                            .int => {
+                                return @field(entity, field.name);
+                            },
+                            else => unreachable,
+                        }
+                        break;
+                    }
+                }
+            }
+            unreachable;
         }
 
         pub fn query(self: *Self) QueryBuilder(Model) {
@@ -46,14 +69,69 @@ pub fn EntityManager(comptime Model: type) type {
             var result_ptrs = try self.allocator.alloc(*Model, results.len);
 
             for (results, 0..) |result, i| {
-                const entity_ptr = try self.allocator.create(Model);
-                entity_ptr.* = result;
-                result_ptrs[i] = entity_ptr;
+                const pk = blk: {
+                    const struct_info = @typeInfo(Model).@"struct";
+                    inline for (struct_info.fields) |field| {
+                        if (utils.get_field_meta(Model, field.name)) |meta| {
+                            if (meta.is_primary_key) {
+                                switch (@typeInfo(field.type)) {
+                                    .int => {
+                                        break :blk @field(result, field.name);
+                                    },
+                                    else => unreachable,
+                                }
+                            }
+                        }
+                    }
+                    unreachable;
+                };
 
-                try self.tracked_entities.put(entity_ptr, .managed);
+                if (self.tracked_entities.get(pk)) |existing| {
+                    existing.entity.* = result;
+                    result_ptrs[i] = existing.entity;
+                } else {
+                    const entity_ptr = try self.allocator.create(Model);
+                    entity_ptr.* = result;
+                    result_ptrs[i] = entity_ptr;
+
+                    try self.tracked_entities.put(pk, .{
+                        .entity = entity_ptr,
+                        .state = .managed,
+                    });
+                }
             }
 
             return result_ptrs;
+        }
+
+        pub fn freeModels(self: *Self, models: []*Model) void {
+            for (models) |model| {
+                self.freeModel(model);
+            }
+            self.allocator.free(models);
+        }
+
+        pub fn freeModel(self: *Self, model: *Model) void {
+            const struct_info = @typeInfo(Model).@"struct";
+            inline for (struct_info.fields) |field| {
+                self.freeField(field.type, @field(model, field.name));
+            }
+        }
+
+        fn freeField(self: *Self, comptime T: type, value: T) void {
+            return switch (@typeInfo(T)) {
+                .pointer => |ptr_info| {
+                    if (ptr_info.size == .slice and ptr_info.child == u8) {
+                        self.allocator.free(value);
+                    }
+                },
+                .@"struct" => |struct_info| {
+                    inline for (struct_info.fields) |field| {
+                        self.freeField(field.type, @field(value, field.name));
+                    }
+                },
+                else => {},
+            };
         }
 
         pub fn get(self: *Self, value: anytype) !?*Model {
@@ -75,25 +153,36 @@ pub fn EntityManager(comptime Model: type) type {
             try qb.where(pk_column_name, "=", value);
 
             const models = try self.find(&qb);
+            defer self.allocator.free(models);
 
             if (models.len == 0) {
                 return null;
             }
 
             if (models.len > 1) {
-                self.allocator.free(models);
+                self.freeModels(models);
                 return error.GotMoreThenOneResult;
             }
-
             return models[0];
         }
 
-        pub fn persist(self: *Self, entity: *Model) !void {
-            try self.tracked_entities.put(entity, .new);
+        pub fn create(self: *Self, entity: Model) !*Model {
+            const entity_ptr = try self.allocator.create(Model);
+            entity_ptr.* = entity;
+
+            const temp_key = @as(i32, @intCast(self.tracked_entities.count())) * -1 - 1;
+            try self.tracked_entities.put(temp_key, .{
+                .entity = entity_ptr,
+                .state = .new,
+            });
+            return entity_ptr;
         }
 
         pub fn remove(self: *Self, entity: *Model) !void {
-            try self.tracked_entities.put(entity, .deleted);
+            const pk = Self.getPrimaryKey(entity);
+            if (self.tracked_entities.getPtr(pk)) |entry| {
+                entry.state = .deleted;
+            }
         }
 
         pub fn clear(self: *Self) void {
@@ -106,16 +195,19 @@ pub fn EntityManager(comptime Model: type) type {
 
             var it = self.tracked_entities.iterator();
 
-            var keys_to_remove = std.ArrayList(*Model){};
+            var keys_to_remove = std.ArrayList(i32){};
             defer keys_to_remove.deinit(self.allocator);
 
-            while (it.next()) |entry| {
-                const entity = entry.key_ptr.*;
-                const state = entry.value_ptr.*;
+            var keys_to_update = std.ArrayList(struct { old: i32, new: i32 }){};
+            defer keys_to_update.deinit(self.allocator);
 
-                switch (state) {
+            while (it.next()) |entry| {
+                const old_key = entry.key_ptr.*;
+                const entity_entry = entry.value_ptr;
+
+                switch (entity_entry.state) {
                     .new => {
-                        const id = try self.insertEntity(Model, entity);
+                        const id = try self.insertEntity(Model, entity_entry.entity);
                         const struct_info = @typeInfo(Model).@"struct";
 
                         inline for (struct_info.fields) |field| {
@@ -124,23 +216,31 @@ pub fn EntityManager(comptime Model: type) type {
                             if (is_pk) {
                                 switch (@typeInfo(field.type)) {
                                     .int => {
-                                        @field(entity, field.name) = id;
+                                        @field(entity_entry.entity, field.name) = id;
                                     },
                                     else => unreachable,
                                 }
                                 break;
                             }
                         }
-                        entry.value_ptr.* = .managed;
+
+                        try keys_to_update.append(self.allocator, .{ .old = old_key, .new = id });
+                        entity_entry.state = .managed;
                     },
                     .managed => {
-                        try self.updateEntity(Model, entity);
+                        try self.updateEntity(Model, entity_entry.entity);
                     },
                     .deleted => {
-                        try self.deleteEntity(entity);
-                        try keys_to_remove.append(self.allocator, entry.key_ptr.*);
-                        self.allocator.destroy(entity);
+                        try self.deleteEntity(entity_entry.entity);
+                        try keys_to_remove.append(self.allocator, old_key);
+                        self.allocator.destroy(entity_entry.entity);
                     },
+                }
+            }
+
+            for (keys_to_update.items) |update| {
+                if (self.tracked_entities.fetchRemove(update.old)) |kv| {
+                    try self.tracked_entities.put(update.new, kv.value);
                 }
             }
 
@@ -418,7 +518,7 @@ pub fn EntityManager(comptime Model: type) type {
 
         fn deleteEntity(self: *Self, entity: *const Model) !void {
             const struct_info = @typeInfo(Model).@"struct";
-            
+
             const table_name = if (@hasDecl(Model, "table_name"))
                 Model.table_name
             else
@@ -429,7 +529,7 @@ pub fn EntityManager(comptime Model: type) type {
 
             var pk_column_name: []const u8 = undefined;
             var pk_found = false;
-            
+
             inline for (struct_info.fields) |field| {
                 if (utils.get_field_meta(Model, field.name)) |meta| {
                     if (meta.is_primary_key) {

@@ -44,6 +44,8 @@ pub fn QueryBuilder(comptime Model: type) type {
         allocator: std.mem.Allocator,
         select_columns: ?[]const ParsedField = null,
         where_conditions: std.ArrayList(WhereCondition),
+        limit: usize = 0,
+        page: usize = 0,
 
         pub fn init(allocator: std.mem.Allocator) Self {
             return .{
@@ -66,6 +68,27 @@ pub fn QueryBuilder(comptime Model: type) type {
                 self.allocator.free(condition.relation_path);
             }
             self.where_conditions.deinit(self.allocator);
+        }
+
+        pub fn clear(self: *Self) void {
+            if (self.select_columns) |columns| {
+                for (columns) |col| {
+                    self.allocator.free(col.relation_path);
+                }
+                self.allocator.free(columns);
+                self.select_columns = null;
+            }
+
+            for (self.where_conditions.items) |condition| {
+                self.allocator.free(condition.column);
+                self.allocator.free(condition.operator);
+                self.allocator.free(condition.value);
+                self.allocator.free(condition.relation_path);
+            }
+            self.where_conditions.clearRetainingCapacity();
+
+            self.limit = 0;
+            self.page = 0;
         }
 
         pub fn select(self: *Self) void {
@@ -244,6 +267,51 @@ pub fn QueryBuilder(comptime Model: type) type {
             });
         }
 
+        pub fn whereILike(self: *Self, field_name: []const u8, value: []const u8) !void {
+            const parsed = try parseFieldName(self.allocator, field_name);
+
+            const wrapped_value = try std.fmt.allocPrint(self.allocator, "%{s}%", .{value});
+            errdefer self.allocator.free(wrapped_value);
+
+            try self.where_conditions.append(self.allocator, .{
+                .table_name = parsed.table_name,
+                .column = try self.allocator.dupe(u8, parsed.column_name),
+                .operator = try self.allocator.dupe(u8, "ILIKE"),
+                .value = wrapped_value,
+                .relation_path = parsed.relation_path,
+            });
+        }
+
+        pub fn whereStartsWith(self: *Self, field_name: []const u8, value: []const u8) !void {
+            const parsed = try parseFieldName(self.allocator, field_name);
+
+            const wrapped_value = try std.fmt.allocPrint(self.allocator, "{s}%", .{value});
+            errdefer self.allocator.free(wrapped_value);
+
+            try self.where_conditions.append(self.allocator, .{
+                .table_name = parsed.table_name,
+                .column = try self.allocator.dupe(u8, parsed.column_name),
+                .operator = try self.allocator.dupe(u8, "ILIKE"),
+                .value = wrapped_value,
+                .relation_path = parsed.relation_path,
+            });
+        }
+
+        pub fn whereEndsWith(self: *Self, field_name: []const u8, value: []const u8) !void {
+            const parsed = try parseFieldName(self.allocator, field_name);
+
+            const wrapped_value = try std.fmt.allocPrint(self.allocator, "%{s}", .{value});
+            errdefer self.allocator.free(wrapped_value);
+
+            try self.where_conditions.append(self.allocator, .{
+                .table_name = parsed.table_name,
+                .column = try self.allocator.dupe(u8, parsed.column_name),
+                .operator = try self.allocator.dupe(u8, "ILIKE"),
+                .value = wrapped_value,
+                .relation_path = parsed.relation_path,
+            });
+        }
+
         fn isRelationInUse(self: *Self, join_table_name: []const u8) bool {
             if (self.select_columns == null) {
                 return true;
@@ -362,6 +430,11 @@ pub fn QueryBuilder(comptime Model: type) type {
                 }
             }
 
+            if (self.limit > 0) {
+                try sql.print(self.allocator, " LIMIT {d}", .{self.limit});
+                try sql.print(self.allocator, " OFFSET {d}", .{self.page * self.limit});
+            }
+
             return .{
                 .sql = try sql.toOwnedSlice(self.allocator),
                 .params = try params.toOwnedSlice(self.allocator),
@@ -431,6 +504,7 @@ pub fn QueryBuilder(comptime Model: type) type {
         }
 
         pub fn execute(self: *Self, conn: *pg.Conn, comptime ResultType: type) ![]ResultType {
+            defer self.clear();
             var result = try self.prepare(conn);
             defer result.deinit();
 

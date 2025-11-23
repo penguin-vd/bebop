@@ -21,3 +21,23 @@ pub fn get_pool(allocator: std.mem.Allocator) !*pg.Pool {
     );
 }
 
+
+pub fn get_testing_pool(allocator: std.mem.Allocator) !*pg.Pool {
+    var env_map = try std.process.getEnvMap(allocator);
+    defer env_map.deinit();
+
+    return try pg.Pool.init(
+        allocator,
+        .{
+            .connect = .{
+                .port = try std.fmt.parseInt(u16, env_map.get("POSTGRES_PORT") orelse "5432", 10),
+                .host = env_map.get("POSTGRES_HOST") orelse "postgres",
+            },
+            .auth = .{
+                .username = env_map.get("POSTGRES_USER").?,
+                .database = "zig-testing-database",
+                .password = env_map.get("POSTGRES_PASSWORD").?,
+            },
+        },
+    );
+}
