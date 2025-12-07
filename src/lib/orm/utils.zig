@@ -77,13 +77,30 @@ pub fn get_field_list(allocator: std.mem.Allocator, comptime Model: type) ![]con
     return fields.toOwnedSlice(allocator);
 }
 
-pub fn is_relation(comptime T: type) bool {
+pub fn is_model(comptime T: type) bool {
     return switch (@typeInfo(T)) {
         .@"struct" => @hasDecl(T, "table_name") and @hasDecl(T, "field_meta"),
-        .optional => |opt| is_relation(opt.child),
-        .pointer => |p| p.size == .slice and is_relation(p.child),
         else => false,
     };
+}
+
+pub fn is_many_relation(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
+        .pointer => |ptr| ptr.size == .slice and is_model(ptr.child),
+        else => false,
+    };
+}
+
+pub fn is_one_relation(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
+        .@"struct" => is_model(T),
+        .optional => |opt| is_one_relation(opt.child),
+        else => false,
+    };
+}
+
+pub fn is_relation(comptime T: type) bool {
+    return is_one_relation(T) or is_many_relation(T);
 }
 
 pub fn to_sql_type(comptime T: type) []const u8 {
@@ -348,4 +365,22 @@ pub fn is_falsy(comptime T: type, value: T) bool {
         .optional => if (value) |actual| is_relation(actual) else false,
         else => false,
     };
+}
+
+pub fn get_primary_key_info(comptime Model: type) struct { name: []const u8, type: type } {
+    const fields = @typeInfo(Model).@"struct".fields;
+
+    inline for (fields) |field| {
+        if (is_primary_key(Model, field.name)) {
+            return .{ .name = field.name, .type = field.type };
+        }
+    }
+
+    inline for (fields) |field| {
+        if (std.mem.eql(u8, field.name, "id")) {
+            return .{ .name = field.name, .type = field.type };
+        }
+    }
+
+    @compileError("Model " ++ @typeName(Model) ++ " has no primary key");
 }

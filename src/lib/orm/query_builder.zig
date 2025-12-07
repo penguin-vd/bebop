@@ -28,16 +28,16 @@ pub fn QueryBuilder(comptime Model: type) type {
             unreachable;
 
         const all_fields = blk: {
-            const count: usize = ft.count_total_fields(Model);
+            const count: usize = ft.count_total_fields(Model, null);
             var fields: [count]ft.FieldInfo = undefined;
-            _ = ft.fill_field_info_slice(table_name, Model, &fields, 0, 0);
+            _ = ft.fill_field_info_slice(table_name, null, Model, null, &fields, 0, 0);
             break :blk fields;
         };
 
         const all_joins = blk: {
-            const count: usize = ft.count_relations(Model);
+            const count: usize = ft.count_relations(Model, null);
             var joins: [count]ft.JoinInfo = undefined;
-            _ = ft.fill_join_info(table_name, Model, &joins, 0, 0);
+            _ = ft.fill_join_info(table_name, Model, null, &joins, 0, 0);
             break :blk joins;
         };
 
@@ -357,20 +357,8 @@ pub fn QueryBuilder(comptime Model: type) type {
             } else {
                 inline for (all_fields, 0..) |field_info, i| {
                     if (i > 0) try sql.print(self.allocator, ", ", .{});
-                    var table_name_to_use = field_info.table_name;
-                    if (field_info.relation_depth > 0) {
-                        inline for (all_joins) |join| {
-                            if (std.mem.eql(u8, join.table_name, field_info.table_name) and
-                                join.relation_depth == field_info.relation_depth)
-                            {
-                                if (join.alias) |alias| {
-                                    table_name_to_use = alias;
-                                }
-                                break;
-                            }
-                        }
-                    }
-                    try sql.print(self.allocator, "{s}.{s}", .{ table_name_to_use, field_info.column_name });
+                    const table_to_use = if (field_info.table_alias) |alias| alias else field_info.table_name;
+                    try sql.print(self.allocator, "{s}.{s}", .{ table_to_use, field_info.column_name });
                 }
             }
 
@@ -441,9 +429,14 @@ pub fn QueryBuilder(comptime Model: type) type {
             };
         }
 
-        fn getFieldValue(allocator: std.mem.Allocator, comptime T: type, row: anytype, index: usize) !T {
+        fn getFieldValue(allocator: std.mem.Allocator, comptime T: type, row: pg.Row, index: usize) !T {
             return switch (@typeInfo(T)) {
-                .int, .float, .bool => row.get(T, index),
+                .int, .float, .bool => {
+                    if (row.get(?T, index)) |result| {
+                        return result;
+                    }
+                    return error.FoundNullValue;
+                },
                 .pointer => |ptr_info| blk: {
                     if (ptr_info.size == .slice and ptr_info.child == u8) {
                         const str = row.get([]const u8, index);
@@ -504,24 +497,37 @@ pub fn QueryBuilder(comptime Model: type) type {
         }
 
         pub fn execute(self: *Self, conn: *pg.Conn, comptime ResultType: type) ![]ResultType {
-            defer self.clear();
             var result = try self.prepare(conn);
             defer result.deinit();
 
-            var results = std.ArrayList(ResultType){};
+            const pk = utils.get_primary_key_info(Model);
+
+            var results = std.AutoHashMap(pk.type, ResultType).init(self.allocator);
             errdefer {
-                for (results.items) |item| {
-                    self.freeModel(ResultType, item);
+                var iter = results.valueIterator();
+                while (iter.next()) |item| {
+                    self.freeModel(ResultType, item.*);
                 }
-                results.deinit(self.allocator);
+                results.deinit();
             }
 
             while (try result.next()) |row| {
                 const model = try self.parseRow(row, ResultType);
-                try results.append(self.allocator, model);
+                if (results.get(@field(model, pk.name))) |old| {
+                    const merged = try self.mergeModels(ResultType, old, model);
+                    try results.put(@field(model, pk.name), merged);
+                } else {
+                    try results.put(@field(model, pk.name), model);
+                }
             }
 
-            return try results.toOwnedSlice(self.allocator);
+            var list = std.ArrayList(ResultType){};
+            var iter = results.valueIterator();
+            while (iter.next()) |item| {
+                try list.append(self.allocator, item.*);
+            }
+
+            return list.toOwnedSlice(self.allocator);
         }
 
         fn parseRow(self: *Self, row: anytype, comptime ResultType: type) !ResultType {
@@ -534,8 +540,10 @@ pub fn QueryBuilder(comptime Model: type) type {
                     if (parsed_field.relation_path.len == 0) {
                         inline for (@typeInfo(ResultType).@"struct".fields) |field| {
                             if (std.mem.eql(u8, field.name, parsed_field.field_name)) {
-                                if (comptime utils.is_relation(field.type)) {
-                                    @field(model, field.name) = try parseRelationField(self.allocator, field.type, row, &col_index);
+                                if (comptime utils.is_one_relation(field.type)) {
+                                    @field(model, field.name) = try parseOneRelationField(self.allocator, field.type, Model, row, &col_index);
+                                } else if (comptime utils.is_many_relation(field.type)) {
+                                    @field(model, field.name) = try parseManyRelationField(self.allocator, field.type, Model, row, &col_index);
                                 } else {
                                     @field(model, field.name) = try getFieldValue(self.allocator, field.type, row, col_index);
                                     col_index += 1;
@@ -548,8 +556,10 @@ pub fn QueryBuilder(comptime Model: type) type {
             } else {
                 var col_index: usize = 0;
                 inline for (@typeInfo(ResultType).@"struct".fields) |field| {
-                    if (comptime utils.is_relation(field.type)) {
-                        @field(model, field.name) = try parseRelationField(self.allocator, field.type, row, &col_index);
+                    if (comptime utils.is_one_relation(field.type)) {
+                        @field(model, field.name) = try parseOneRelationField(self.allocator, field.type, Model, row, &col_index);
+                    } else if (comptime utils.is_many_relation(field.type)) {
+                        @field(model, field.name) = try parseManyRelationField(self.allocator, field.type, Model, row, &col_index);
                     } else {
                         @field(model, field.name) = try getFieldValue(self.allocator, field.type, row, col_index);
                         col_index += 1;
@@ -560,13 +570,20 @@ pub fn QueryBuilder(comptime Model: type) type {
             return model;
         }
 
-        fn parseRelationField(allocator: std.mem.Allocator, comptime RelationType: type, row: anytype, col_index: *usize) !RelationType {
+        fn parseOneRelationField(allocator: std.mem.Allocator, comptime RelationType: type, comptime Parent: ?type, row: anytype, col_index: *usize) !RelationType {
             var relation_model: RelationType = std.mem.zeroes(RelationType);
 
+            if (Parent) |p| {
+                if (RelationType == p) {
+                    return relation_model;
+                }
+            }
+
             inline for (@typeInfo(RelationType).@"struct".fields) |field| {
-                if (comptime utils.is_relation(field.type)) {
-                    // Nested relation - recurse deeper
-                    @field(relation_model, field.name) = try parseRelationField(allocator, field.type, row, col_index);
+                if (comptime utils.is_one_relation(field.type)) {
+                    @field(relation_model, field.name) = try parseOneRelationField(allocator, field.type, Parent, row, col_index);
+                } else if (comptime utils.is_many_relation(field.type)) {
+                    @field(relation_model, field.name) = try parseManyRelationField(allocator, field.type, Parent, row, col_index);
                 } else {
                     @field(relation_model, field.name) = try getFieldValue(allocator, field.type, row, col_index.*);
                     col_index.* += 1;
@@ -574,6 +591,20 @@ pub fn QueryBuilder(comptime Model: type) type {
             }
 
             return relation_model;
+        }
+
+        fn parseManyRelationField(allocator: std.mem.Allocator, comptime RelationType: type, comptime Parent: ?type, row: anytype, col_index: *usize) !RelationType {
+            const ChildType = @typeInfo(RelationType).pointer.child;
+            var array = std.ArrayList(ChildType){};
+
+            const model = parseOneRelationField(allocator, ChildType, Parent, row, col_index) catch |err| switch (err) {
+                error.FoundNullValue => return try array.toOwnedSlice(allocator),
+                else => return err,
+            };
+
+            try array.append(allocator, model);
+
+            return try array.toOwnedSlice(allocator);
         }
 
         fn freeModel(self: *Self, comptime ResultType: type, model: ResultType) void {
@@ -615,6 +646,56 @@ pub fn QueryBuilder(comptime Model: type) type {
                     }
                 }
             }
+        }
+
+        fn mergeModels(self: *Self, comptime Type: type, old: Type, new: Type) std.mem.Allocator.Error!Type {
+            var result = new;
+
+            inline for (@typeInfo(Type).@"struct".fields) |field| {
+                if (comptime utils.is_one_relation(field.type)) {
+                    @field(result, field.name) = try self.mergeModels(
+                        field.type,
+                        @field(old, field.name),
+                        @field(new, field.name),
+                    );
+                } else if (comptime utils.is_many_relation(field.type)) {
+                    const ChildType = @typeInfo(field.type).pointer.child;
+                    const child_pk = utils.get_primary_key_info(ChildType);
+
+                    const old_slice = @field(old, field.name);
+                    const new_slice = @field(new, field.name);
+
+                    var map = std.AutoHashMap(child_pk.type, ChildType).init(self.allocator);
+                    defer map.deinit();
+
+                    for (old_slice) |item| {
+                        try map.put(@field(item, child_pk.name), item);
+                    }
+
+                    for (new_slice) |item| {
+                        const key = @field(item, child_pk.name);
+                        if (map.get(key)) |existing| {
+                            const merged = try self.mergeModels(ChildType, existing, item);
+                            try map.put(key, merged);
+                        } else {
+                            try map.put(key, item);
+                        }
+                    }
+
+                    var list = std.ArrayList(ChildType){};
+                    var iter = map.valueIterator();
+                    while (iter.next()) |item| {
+                        try list.append(self.allocator, item.*);
+                    }
+
+                    self.allocator.free(old_slice);
+                    self.allocator.free(new_slice);
+
+                    @field(result, field.name) = try list.toOwnedSlice(self.allocator);
+                }
+            }
+
+            return result;
         }
     };
 }

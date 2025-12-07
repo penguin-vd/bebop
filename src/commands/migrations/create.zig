@@ -4,6 +4,8 @@ const bebop = @import("../../lib/bebop.zig");
 
 const Category = @import("../../models/category.zig");
 const Product = @import("../../models/product.zig");
+const Order = @import("../../models/order.zig");
+const OrderLine = @import("../../models/order_line.zig");
 
 pub const command = "migrations:create";
 
@@ -16,5 +18,7 @@ pub fn run(allocator: std.mem.Allocator) !void {
     try bebop.orm.make_migrations(allocator, pool, &[_]type{
         Category,
         Product,
+        Order,
+        OrderLine,
     });
 }

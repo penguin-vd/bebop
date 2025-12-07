@@ -333,11 +333,13 @@ test "filter by nested relation field" {
         allocator.free(result.params);
     }
 
-    try std.testing.expectEqualStrings("SELECT products.id, categories_parent.id, categories_parent.name, categories.id, categories.name " ++
-        "FROM products " ++
-        "LEFT JOIN categories ON products.category_id = categories.id " ++
-        "LEFT JOIN categories AS categories_parent ON categories.parent_id = categories_parent.id " ++
-        "WHERE categories_parent.id = $1", result.sql);
+    try std.testing.expectEqualStrings(
+        "SELECT products.id, categories.id, categories.name, categories_parent.id, categories_parent.name " ++
+            "FROM products LEFT JOIN categories ON products.category_id = categories.id " ++
+            "LEFT JOIN categories AS categories_parent ON categories.parent_id = categories_parent.id " ++
+            "WHERE categories_parent.id = $1",
+        result.sql,
+    );
 
     try std.testing.expectEqual(@as(usize, 1), result.params.len);
     try std.testing.expectEqualStrings("5", result.params[0]);
