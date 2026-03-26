@@ -121,8 +121,17 @@ pub fn EntityManager(comptime Model: type) type {
         fn freeField(self: *Self, comptime T: type, value: T) void {
             return switch (@typeInfo(T)) {
                 .pointer => |ptr_info| {
-                    if (ptr_info.size == .slice and ptr_info.child == u8) {
-                        self.allocator.free(value);
+                    if (ptr_info.size == .slice) {
+                        if (ptr_info.child == u8) {
+                            if (@intFromPtr(value.ptr) != 0) {
+                                self.allocator.free(value);
+                            }
+                        } else if (comptime utils.is_model(ptr_info.child)) {
+                            if (@intFromPtr(value.ptr) != 0) {
+                                for (value) |item| self.freeField(ptr_info.child, item);
+                                self.allocator.free(value);
+                            }
+                        }
                     }
                 },
                 .@"struct" => |struct_info| {
@@ -251,6 +260,32 @@ pub fn EntityManager(comptime Model: type) type {
             try self.conn.commit();
         }
 
+        fn findBackReferenceField(comptime ChildType: type, comptime ParentType: type) []const u8 {
+            const child_fields = @typeInfo(ChildType).@"struct".fields;
+            inline for (child_fields) |field| {
+                if (comptime utils.is_one_relation(field.type)) {
+                    const base = switch (@typeInfo(field.type)) {
+                        .optional => |opt| opt.child,
+                        else => field.type,
+                    };
+                    if (base == ParentType) return field.name;
+                }
+            }
+            @compileError("No back-reference field found in " ++ @typeName(ChildType) ++ " pointing to " ++ @typeName(ParentType));
+        }
+
+        fn getRelationPk(comptime FieldType: type, field_value: FieldType) i32 {
+            const BaseType = comptime switch (@typeInfo(FieldType)) {
+                .optional => |opt| opt.child,
+                else => FieldType,
+            };
+            const pk_info = comptime utils.get_primary_key_info(BaseType);
+            return switch (@typeInfo(FieldType)) {
+                .optional => if (field_value) |v| @field(v, pk_info.name) else 0,
+                else => @field(field_value, pk_info.name),
+            };
+        }
+
         fn bindRelationOrValue(
             self: *Self,
             comptime T: type,
@@ -260,34 +295,24 @@ pub fn EntityManager(comptime Model: type) type {
             relation_ids: *std.StringHashMap(i32),
         ) !void {
             _ = self;
-            const is_relation = comptime utils.is_relation(field.type);
+            const is_relation = comptime utils.is_one_relation(field.type);
 
             if (is_relation) {
                 if (relation_ids.get(field.name)) |id| {
                     try stmt.bind(id);
                 } else {
-                    const relation = @field(entity, field.name);
-                    const relation_info = @typeInfo(field.type).@"struct";
-
-                    inline for (relation_info.fields) |rfield| {
-                        if (utils.get_field_meta(field.type, rfield.name)) |rmeta| {
-                            if (rmeta.is_primary_key) {
-                                const value = @field(relation, rfield.name);
-                                try stmt.bind(value);
-                                break;
-                            }
-                        }
-                    }
+                    const pk = getRelationPk(field.type, @field(entity, field.name));
+                    try stmt.bind(pk);
                 }
             } else {
                 try stmt.bind(@field(entity, field.name));
             }
         }
 
-        fn insertEntity(self: *Self, comptime T: type, entity: *T) !i32 {
+        fn insertEntity(self: *Self, comptime T: type, entity: *T) anyerror!i32 {
             const struct_info = @typeInfo(T).@"struct";
 
-            // First pass: insert any relations that need inserting
+            // First pass: insert any one-relations that need inserting
             var relation_ids = std.StringHashMap(i32).init(self.allocator);
             defer relation_ids.deinit();
 
@@ -296,29 +321,24 @@ pub fn EntityManager(comptime Model: type) type {
                 const is_pk = if (meta) |m| m.is_primary_key else false;
                 if (is_pk) continue;
 
-                const is_relation = comptime utils.is_relation(field.type);
+                const is_relation = comptime utils.is_one_relation(field.type);
                 if (is_relation) {
-                    var relation = &@field(entity, field.name);
-                    const relation_info = @typeInfo(field.type).@"struct";
-
-                    inline for (relation_info.fields) |rfield| {
-                        if (utils.get_field_meta(field.type, rfield.name)) |rmeta| {
-                            if (rmeta.is_primary_key) {
-                                const value = @field(relation.*, rfield.name);
-                                if (utils.is_falsy(rfield.type, value)) {
-                                    const id = try self.insertEntity(field.type, relation);
-
-                                    try relation_ids.put(field.name, id);
-
-                                    switch (@typeInfo(rfield.type)) {
-                                        .int => {
-                                            @field(relation, rfield.name) = id;
-                                        },
-                                        else => unreachable,
-                                    }
-                                } else {}
-                                break;
-                            }
+                    const BaseType = comptime switch (@typeInfo(field.type)) {
+                        .optional => |opt| opt.child,
+                        else => field.type,
+                    };
+                    const pk_info = comptime utils.get_primary_key_info(BaseType);
+                    const relation = &@field(entity, field.name);
+                    const pk_val = getRelationPk(field.type, relation.*);
+                    if (utils.is_falsy(pk_info.type, pk_val)) {
+                        const id = try self.insertEntity(BaseType, switch (@typeInfo(field.type)) {
+                            .optional => &(relation.*.?),
+                            else => relation,
+                        });
+                        try relation_ids.put(field.name, id);
+                        switch (@typeInfo(field.type)) {
+                            .optional => @field(relation.*.?, pk_info.name) = id,
+                            else => @field(relation.*, pk_info.name) = id,
                         }
                     }
                 }
@@ -352,14 +372,17 @@ pub fn EntityManager(comptime Model: type) type {
                     continue;
                 }
 
-                const is_relation = comptime utils.is_relation(field.type);
+                const is_one_rel = comptime utils.is_one_relation(field.type);
+                const is_many_rel = comptime utils.is_many_relation(field.type);
+
+                if (is_many_rel) continue;
 
                 if (!first) {
                     try columns.appendSlice(self.allocator, ", ");
                     try placeholders.appendSlice(self.allocator, ", ");
                 }
 
-                if (is_relation) {
+                if (is_one_rel) {
                     try columns.print(self.allocator, "{s}_id", .{column_name});
                 } else {
                     try columns.appendSlice(self.allocator, column_name);
@@ -379,9 +402,8 @@ pub fn EntityManager(comptime Model: type) type {
                 const meta = comptime utils.get_field_meta(T, field.name);
                 const is_pk = if (meta) |m| m.is_primary_key else false;
 
-                if (is_pk) {
-                    continue;
-                }
+                if (is_pk) continue;
+                if (comptime utils.is_many_relation(field.type)) continue;
 
                 try self.bindRelationOrValue(T, field, entity, &stmt, &relation_ids);
             }
@@ -396,43 +418,55 @@ pub fn EntityManager(comptime Model: type) type {
 
             while (try result.next()) |_| {}
 
+            // Post-insert: cascade many-relation children
+            inline for (struct_info.fields) |field| {
+                if (comptime utils.is_many_relation(field.type)) {
+                    const ChildType = @typeInfo(field.type).pointer.child;
+                    const back_ref = comptime findBackReferenceField(ChildType, T);
+                    const parent_pk = comptime utils.get_primary_key_info(T);
+                    const child_pk = comptime utils.get_primary_key_info(ChildType);
+
+                    for (@field(entity, field.name)) |*child| {
+                        @field(@field(child.*, back_ref), parent_pk.name) = id;
+                        const child_id = try self.insertEntity(ChildType, child);
+                        @field(child.*, child_pk.name) = child_id;
+                    }
+                }
+            }
+
             return id;
         }
 
-        fn updateEntity(self: *Self, comptime T: type, entity: *T) !void {
+        fn updateEntity(self: *Self, comptime T: type, entity: *T) anyerror!void {
             const struct_info = @typeInfo(T).@"struct";
 
             var relation_ids = std.StringHashMap(i32).init(self.allocator);
             defer relation_ids.deinit();
 
+            // First pass: insert any new one-relations (id == 0)
             inline for (struct_info.fields) |field| {
                 const meta = comptime utils.get_field_meta(T, field.name);
                 const is_pk = if (meta) |m| m.is_primary_key else false;
                 if (is_pk) continue;
 
-                const is_relation = comptime utils.is_relation(field.type);
+                const is_relation = comptime utils.is_one_relation(field.type);
                 if (is_relation) {
-                    var relation = &@field(entity, field.name);
-                    const relation_info = @typeInfo(field.type).@"struct";
-
-                    inline for (relation_info.fields) |rfield| {
-                        if (utils.get_field_meta(field.type, rfield.name)) |rmeta| {
-                            if (rmeta.is_primary_key) {
-                                const value = @field(relation, rfield.name);
-                                if (utils.is_falsy(rfield.type, value)) {
-                                    const id = try self.insertEntity(field.type, relation);
-
-                                    try relation_ids.put(field.name, id);
-                                    switch (@typeInfo(rfield.type)) {
-                                        .int => {
-                                            @field(relation, rfield.name) = id;
-                                        },
-                                        else => unreachable,
-                                    }
-                                } else {}
-                                // TODO: Handle updating existing relations?
-                                break;
-                            }
+                    const BaseType = comptime switch (@typeInfo(field.type)) {
+                        .optional => |opt| opt.child,
+                        else => field.type,
+                    };
+                    const pk_info = comptime utils.get_primary_key_info(BaseType);
+                    const relation = &@field(entity, field.name);
+                    const pk_val = getRelationPk(field.type, relation.*);
+                    if (utils.is_falsy(pk_info.type, pk_val)) {
+                        const id = try self.insertEntity(BaseType, switch (@typeInfo(field.type)) {
+                            .optional => &(relation.*.?),
+                            else => relation,
+                        });
+                        try relation_ids.put(field.name, id);
+                        switch (@typeInfo(field.type)) {
+                            .optional => @field(relation.*.?, pk_info.name) = id,
+                            else => @field(relation.*, pk_info.name) = id,
                         }
                     }
                 }
@@ -455,24 +489,22 @@ pub fn EntityManager(comptime Model: type) type {
                 const meta = comptime utils.get_field_meta(T, field.name);
                 const is_pk = if (meta) |m| m.is_primary_key else false;
 
-                if (is_pk) {
-                    continue;
-                }
+                if (is_pk) continue;
 
                 const column_name = utils.get_column_name(T, field.name);
-                const is_relation = comptime utils.is_relation(field.type);
+                const is_one_rel = comptime utils.is_one_relation(field.type);
+                const is_many_rel = comptime utils.is_many_relation(field.type);
 
-                if (is_relation) {
-                    if (!first) try sql.appendSlice(self.allocator, ", ");
+                if (is_many_rel) continue;
+
+                if (!first) try sql.appendSlice(self.allocator, ", ");
+                if (is_one_rel) {
                     try sql.print(self.allocator, "{s}_id = ${d}", .{ column_name, param_index });
-                    param_index += 1;
-                    first = false;
                 } else {
-                    if (!first) try sql.appendSlice(self.allocator, ", ");
                     try sql.print(self.allocator, "{s} = ${d}", .{ column_name, param_index });
-                    param_index += 1;
-                    first = false;
                 }
+                param_index += 1;
+                first = false;
             }
 
             var pk_column_name: []const u8 = undefined;
@@ -494,31 +526,44 @@ pub fn EntityManager(comptime Model: type) type {
                 const meta = comptime utils.get_field_meta(T, field.name);
                 const is_pk = if (meta) |m| m.is_primary_key else false;
 
-                if (is_pk) {
-                    continue;
-                }
+                if (is_pk) continue;
+                if (comptime utils.is_many_relation(field.type)) continue;
 
                 try self.bindRelationOrValue(T, field, entity, &stmt, &relation_ids);
             }
 
-            inline for (struct_info.fields) |field| {
-                if (utils.get_field_meta(T, field.name)) |meta| {
-                    if (meta.is_primary_key) {
-                        try stmt.bind(@field(entity, field.name));
-                        break;
-                    }
-                }
-            }
+            const update_pk = comptime utils.get_primary_key_info(T);
+            try stmt.bind(@field(entity.*, update_pk.name));
 
             var result = try stmt.execute();
             defer result.deinit();
 
             while (try result.next()) |_| {}
+
+            // Post-update: cascade many-relation children (insert new, update existing)
+            const parent_pk = comptime utils.get_primary_key_info(T);
+            const parent_id = @field(entity.*, parent_pk.name);
+
+            inline for (struct_info.fields) |field| {
+                if (comptime utils.is_many_relation(field.type)) {
+                    const ChildType = @typeInfo(field.type).pointer.child;
+                    const back_ref = comptime findBackReferenceField(ChildType, T);
+                    const child_pk = comptime utils.get_primary_key_info(ChildType);
+
+                    for (@field(entity, field.name)) |*child| {
+                        @field(@field(child.*, back_ref), parent_pk.name) = parent_id;
+                        if (utils.is_falsy(child_pk.type, @field(child.*, child_pk.name))) {
+                            const child_id = try self.insertEntity(ChildType, child);
+                            @field(child.*, child_pk.name) = child_id;
+                        } else {
+                            try self.updateEntity(ChildType, child);
+                        }
+                    }
+                }
+            }
         }
 
         fn deleteEntity(self: *Self, entity: *const Model) !void {
-            const struct_info = @typeInfo(Model).@"struct";
-
             const table_name = if (@hasDecl(Model, "table_name"))
                 Model.table_name
             else
@@ -527,36 +572,15 @@ pub fn EntityManager(comptime Model: type) type {
             var sql = std.ArrayList(u8){};
             defer sql.deinit(self.allocator);
 
-            var pk_column_name: []const u8 = undefined;
-            var pk_found = false;
-
-            inline for (struct_info.fields) |field| {
-                if (utils.get_field_meta(Model, field.name)) |meta| {
-                    if (meta.is_primary_key) {
-                        pk_column_name = utils.get_column_name(Model, field.name);
-                        pk_found = true;
-                        break;
-                    }
-                }
-            }
-
-            if (!pk_found) {
-                return error.NoPrimaryKeyFound;
-            }
+            const delete_pk = comptime utils.get_primary_key_info(Model);
+            const pk_column_name = utils.get_column_name(Model, delete_pk.name);
 
             try sql.print(self.allocator, "DELETE FROM {s} WHERE {s} = $1", .{ table_name, pk_column_name });
 
             var stmt = try self.conn.prepare(sql.items);
             errdefer stmt.deinit();
 
-            inline for (struct_info.fields) |field| {
-                if (utils.get_field_meta(Model, field.name)) |meta| {
-                    if (meta.is_primary_key) {
-                        try stmt.bind(@field(entity, field.name));
-                        break;
-                    }
-                }
-            }
+            try stmt.bind(@field(entity.*, delete_pk.name));
 
             var result = try stmt.execute();
             defer result.deinit();

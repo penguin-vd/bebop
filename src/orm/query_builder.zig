@@ -163,11 +163,12 @@ pub fn QueryBuilder(comptime Model: type) type {
                 const final_fields = @typeInfo(CurrentType).@"struct".fields;
                 inline for (final_fields) |field| {
                     if (std.mem.eql(u8, field_str, field.name)) {
-                        const column = utils.get_column_name(CurrentType, field.name);
+                        const column = comptime utils.get_column_name(CurrentType, field.name);
+                        const actual_column = if (comptime utils.is_one_relation(field.type)) column ++ "_id" else column;
                         const relation_path = if (prefix_path) |p| p else try allocator.alloc([]const u8, 0);
                         return ParsedField{
                             .table_name = CurrentType.table_name,
-                            .column_name = column,
+                            .column_name = actual_column,
                             .field_name = field.name,
                             .relation_path = relation_path,
                         };
@@ -526,6 +527,7 @@ pub fn QueryBuilder(comptime Model: type) type {
             while (iter.next()) |item| {
                 try list.append(self.allocator, item.*);
             }
+            results.deinit();
 
             return list.toOwnedSlice(self.allocator);
         }
@@ -650,6 +652,23 @@ pub fn QueryBuilder(comptime Model: type) type {
 
         fn mergeModels(self: *Self, comptime Type: type, old: Type, new: Type) std.mem.Allocator.Error!Type {
             var result = new;
+
+            // Free old's scalar allocated fields — result starts as new so old's copies are discarded
+            inline for (@typeInfo(Type).@"struct".fields) |field| {
+                if (comptime !utils.is_one_relation(field.type) and !utils.is_many_relation(field.type)) {
+                    switch (@typeInfo(field.type)) {
+                        .pointer => |ptr_info| {
+                            if (ptr_info.size == .slice and ptr_info.child == u8) {
+                                const old_val = @field(old, field.name);
+                                if (@intFromPtr(old_val.ptr) != 0) {
+                                    self.allocator.free(old_val);
+                                }
+                            }
+                        },
+                        else => {},
+                    }
+                }
+            }
 
             inline for (@typeInfo(Type).@"struct".fields) |field| {
                 if (comptime utils.is_one_relation(field.type)) {

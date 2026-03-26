@@ -9,6 +9,6 @@ pub const table_name = "orders";
 
 pub const field_meta = .{
     .id = utils.FieldMeta(i32){ .is_primary_key = true, .is_auto_increment = true },
-    .name = utils.FieldMeta([]const u8){ .max_length = 255 },
+    .reference = utils.FieldMeta([]const u8){ .max_length = 255 },
     .order_lines = utils.FieldMeta([]OrderLine){},
 };
