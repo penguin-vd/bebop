@@ -1,4 +1,4 @@
-const orm = @import("../lib/bebop.zig").orm;
+const orm = @import("bebop").orm;
 const Category = @import("category.zig");
 
 id: i32 = 0,

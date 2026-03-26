@@ -1,6 +1,6 @@
 const Order = @import("order.zig");
 const Product = @import("product.zig");
-const orm = @import("../lib/bebop.zig").orm;
+const orm = @import("bebop").orm;
 
 id: i32 = 0,
 quantity: i32,

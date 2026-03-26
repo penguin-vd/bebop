@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const bebop = @import("../../lib/bebop.zig");
+const bebop = @import("bebop");
 
 pub const command = "migrations:apply";
 

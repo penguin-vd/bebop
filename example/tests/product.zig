@@ -1,5 +1,5 @@
 const std = @import("std");
-const bebop = @import("../lib/bebop.zig");
+const bebop = @import("bebop");
 
 const Product = @import("../models/product.zig");
 const Category = @import("../models/category.zig");

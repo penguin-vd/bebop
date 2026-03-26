@@ -4,7 +4,7 @@ const pg = @import("pg");
 
 const App = @import("app.zig");
 const routes = @import("routes.zig");
-const bebop = @import("lib/bebop.zig");
+const bebop = @import("bebop");
 
 const Product = @import("models/product.zig");
 const Category = @import("models/category.zig");
