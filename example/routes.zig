@@ -3,10 +3,6 @@ const std = @import("std");
 const bebop = @import("bebop");
 const httpz = bebop.httpz;
 
-const Product = @import("models/product.zig");
-const Category = @import("models/category.zig");
-const Order = @import("models/order.zig");
-
 const pc = @import("controllers/product_controller.zig");
 
 pub const Router = httpz.Router(*App, *const fn (*App.RequestContext, *httpz.Request, *httpz.Response) anyerror!void);
@@ -23,7 +19,7 @@ pub fn testing(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Respon
     var conn = try ctx.app.db.acquire();
     defer conn.release();
 
-    var em = bebop.orm.EntityManager(Order).init(res.arena, conn);
+    var em = bebop.orm.EntityManager(@import("models/order.zig")).init(res.arena, conn);
     defer em.deinit();
 
     var qb = em.query();

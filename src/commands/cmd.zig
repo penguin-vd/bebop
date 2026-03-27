@@ -1,5 +1,10 @@
 const std = @import("std");
 
+pub const migrations = struct {
+    pub const Apply = @import("migrations/apply.zig");
+    pub const Create = @import("migrations/create.zig").MigrationsCreate;
+};
+
 var commands = std.ArrayList(struct { command: []const u8, run: *const fn (allocator: std.mem.Allocator) anyerror!void }){};
 
 pub fn register(allocator: std.mem.Allocator, comptime Command: type) !void {

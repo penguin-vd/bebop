@@ -5,9 +5,6 @@ const httpz = bebop.httpz;
 const App = @import("app.zig");
 const routes = @import("routes.zig");
 
-const Product = @import("models/product.zig");
-const Category = @import("models/category.zig");
-const CreateMigrations = @import("commands/migrations/create.zig");
 const cmd = @import("commands/cmd.zig");
 
 pub fn main() !void {
