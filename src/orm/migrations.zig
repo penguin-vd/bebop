@@ -92,6 +92,12 @@ pub fn migrate(allocator: std.mem.Allocator, db: *pg.Pool) !void {
     var migration_dir = try std.fs.cwd().openDir("migrations", .{ .iterate = true });
     defer migration_dir.close();
 
+    var pending: std.ArrayList([]const u8) = .{};
+    defer {
+        for (pending.items) |name| allocator.free(name);
+        pending.deinit(allocator);
+    }
+
     var it = migration_dir.iterate();
     while (try it.next()) |entry| {
         if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".sql")) {
@@ -107,22 +113,33 @@ pub fn migrate(allocator: std.mem.Allocator, db: *pg.Pool) !void {
         }
 
         if (!is_applied) {
-            std.debug.print("Applying migration: {s}\n", .{entry.name});
-
-            const file_path = try std.fs.path.join(
-                allocator,
-                &[_][]const u8{ "migrations", entry.name },
-            );
-            defer allocator.free(file_path);
-
-            const sql = try std.fs.cwd().readFileAlloc(allocator, file_path, 1_000_000);
-            defer allocator.free(sql);
-
-            _ = try conn.exec(sql, .{});
-
-            const insert_sql = "INSERT INTO schema_migrations (migration_name) VALUES ($1)";
-            _ = try conn.exec(insert_sql, .{entry.name});
+            const name = try allocator.dupe(u8, entry.name);
+            try pending.append(allocator, name);
         }
+    }
+
+    std.mem.sort([]const u8, pending.items, {}, struct {
+        fn lessThan(_: void, a: []const u8, b: []const u8) bool {
+            return std.mem.order(u8, a, b) == .lt;
+        }
+    }.lessThan);
+
+    for (pending.items) |migration_name| {
+        std.debug.print("Applying migration: {s}\n", .{migration_name});
+
+        const file_path = try std.fs.path.join(
+            allocator,
+            &[_][]const u8{ "migrations", migration_name },
+        );
+        defer allocator.free(file_path);
+
+        const sql = try std.fs.cwd().readFileAlloc(allocator, file_path, 1_000_000);
+        defer allocator.free(sql);
+
+        _ = try conn.exec(sql, .{});
+
+        const insert_sql = "INSERT INTO schema_migrations (migration_name) VALUES ($1)";
+        _ = try conn.exec(insert_sql, .{migration_name});
     }
 
     std.debug.print("Migrations applied successfully.\n", .{});

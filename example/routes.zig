@@ -2,6 +2,7 @@ const bebop = @import("bebop");
 const httpz = bebop.httpz;
 
 const pc = @import("controllers/product_controller.zig");
+const oc = @import("controllers/order_controller.zig");
 
 pub const Router = bebop.http.Router(*bebop.App, bebop.App.Action);
 pub const Group = bebop.http.Group(*bebop.App, bebop.App.Action);
@@ -12,6 +13,9 @@ pub fn register(router: *Router) !void {
 
     var products = router.group("/api/products");
     pc.register(&products);
+
+    var orders = router.group("/api/orders");
+    oc.register(&orders);
 }
 
 pub fn testing(ctx: *bebop.App.RequestContext, req: *httpz.Request, res: *httpz.Response) !void {
