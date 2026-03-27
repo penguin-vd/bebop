@@ -1,5 +1,5 @@
 .{
-    .name = .server,
+    .name = .bebop,
     .version = "0.0.0",
     .fingerprint = 0x5a6dd5f6f17735ef,
     .minimum_zig_version = "0.15.1",

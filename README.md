@@ -16,7 +16,25 @@ Bebop is a high-performance, type-safe web framework and Object-Relational Mappe
 
 ### Installation
 
-For now this is only possible in this repository, later this will supported using it like an library.
+Fetch the package:
+
+```sh
+zig fetch --save git+https://github.com/penguin-vd/bebop
+```
+
+Then add the module in your `build.zig`:
+
+```zig
+const bebop_module = b.dependency("bebop", .{
+    .target = target,
+    .optimize = optimize,
+}).module("bebop");
+```
+
+## Credits
+
+- [pg.zig](https://github.com/karlseguin/pg.zig) — PostgreSQL client by karlseguin
+- [http.zig](https://github.com/karlseguin/http.zig) — HTTP server by karlseguin
 
 ## Usage
 
