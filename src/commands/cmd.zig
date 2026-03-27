@@ -5,6 +5,10 @@ pub const migrations = struct {
     pub const Create = @import("migrations/create.zig").MigrationsCreate;
 };
 
+pub const debug = struct {
+    pub const Router = @import("debug/router.zig").DebugRouter;
+};
+
 var commands = std.ArrayList(struct { command: []const u8, run: *const fn (allocator: std.mem.Allocator) anyerror!void }){};
 
 pub fn register(allocator: std.mem.Allocator, comptime Command: type) !void {

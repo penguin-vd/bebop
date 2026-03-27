@@ -10,11 +10,7 @@ const OrderLine = @import("../models/order_line.zig");
 
 const models = &[_]type{ Category, Product, Order, OrderLine };
 
-pub fn handle(allocator: std.mem.Allocator) !void {
-    defer bebop.cmd.deinit(allocator);
-
-    try bebop.cmd.register(allocator, bebop.cmd.migrations.Apply);
+pub fn register(allocator: std.mem.Allocator) !void {
     try bebop.cmd.register(allocator, bebop.cmd.migrations.Create(models));
     try bebop.cmd.register(allocator, Example);
-    try bebop.cmd.handle(allocator);
 }

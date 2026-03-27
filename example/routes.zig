@@ -1,20 +1,20 @@
-const App = @import("app.zig");
-const std = @import("std");
 const bebop = @import("bebop");
 const httpz = bebop.httpz;
 
 const pc = @import("controllers/product_controller.zig");
 
-pub const Router = httpz.Router(*App, *const fn (*App.RequestContext, *httpz.Request, *httpz.Response) anyerror!void);
+pub const Router = bebop.http.Router(*bebop.App, bebop.App.Action);
+pub const Group = bebop.http.Group(*bebop.App, bebop.App.Action);
 
 pub fn register(router: *Router) !void {
-    router.get("api/healthz", health_check, .{});
-    router.get("api/test", testing, .{});
+    router.get("api/healthz", health_check);
+    router.get("api/test", testing);
 
-    pc.register(router);
+    var products = router.group("/api/products");
+    pc.register(&products);
 }
 
-pub fn testing(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Response) !void {
+pub fn testing(ctx: *bebop.App.RequestContext, req: *httpz.Request, res: *httpz.Response) !void {
     _ = req;
     var conn = try ctx.app.db.acquire();
     defer conn.release();
@@ -31,7 +31,7 @@ pub fn testing(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Respon
     try res.json(orders, .{});
 }
 
-pub fn health_check(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Response) !void {
+pub fn health_check(ctx: *bebop.App.RequestContext, req: *httpz.Request, res: *httpz.Response) !void {
     _ = req;
 
     var conn = try ctx.app.db.acquire();

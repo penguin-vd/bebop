@@ -1,5 +1,3 @@
-const App = @import("../app.zig");
-
 const std = @import("std");
 const bebop = @import("bebop");
 const httpz = bebop.httpz;
@@ -7,19 +5,17 @@ const httpz = bebop.httpz;
 const Product = @import("../models/product.zig");
 const Category = @import("../models/category.zig");
 
-const Router = @import("../routes.zig").Router;
+const Group = @import("../routes.zig").Group;
 
-pub fn register(router: *Router) void {
-    var group = router.group("/api/products", .{});
-
-    group.get("/", list, .{});
-    group.post("/", create, .{});
-    group.get("/:id", get, .{});
-    group.post("/:id", update, .{});
-    group.delete("/:id", delete, .{});
+pub fn register(group: *Group) void {
+    group.get("/", list);
+    group.post("/", create);
+    group.get("/:id", get);
+    group.post("/:id", update);
+    group.delete("/:id", delete);
 }
 
-fn list(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Response) !void {
+fn list(ctx: *bebop.App.RequestContext, req: *httpz.Request, res: *httpz.Response) !void {
     var conn = try ctx.app.db.acquire();
     defer conn.release();
 
@@ -56,7 +52,7 @@ fn list(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Response) !vo
     try res.json(products, .{});
 }
 
-fn create(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Response) !void {
+fn create(ctx: *bebop.App.RequestContext, req: *httpz.Request, res: *httpz.Response) !void {
     var conn = try ctx.app.db.acquire();
     defer conn.release();
 
@@ -99,7 +95,7 @@ fn create(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Response) !
     try res.json(.{ .message = "Invalid body" }, .{});
 }
 
-fn get(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Response) !void {
+fn get(ctx: *bebop.App.RequestContext, req: *httpz.Request, res: *httpz.Response) !void {
     var conn = try ctx.app.db.acquire();
     defer conn.release();
 
@@ -118,7 +114,7 @@ fn get(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Response) !voi
     try res.json(.{ .message = "Product not found" }, .{});
 }
 
-fn update(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Response) !void {
+fn update(ctx: *bebop.App.RequestContext, req: *httpz.Request, res: *httpz.Response) !void {
     var conn = try ctx.app.db.acquire();
     defer conn.release();
 
@@ -168,7 +164,7 @@ fn update(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Response) !
     try res.json(.{ .message = "Invalid body" }, .{});
 }
 
-fn delete(ctx: *App.RequestContext, req: *httpz.Request, res: *httpz.Response) !void {
+fn delete(ctx: *bebop.App.RequestContext, req: *httpz.Request, res: *httpz.Response) !void {
     var conn = try ctx.app.db.acquire();
     defer conn.release();
 
