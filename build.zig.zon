@@ -1,7 +1,7 @@
 .{
     .name = .bebop,
-    .version = "0.0.0",
-    .fingerprint = 0x5a6dd5f6f17735ef,
+    .version = "0.1.0",
+    .fingerprint = 0xd01bcd1bd406c40b,
     .minimum_zig_version = "0.15.1",
     .dependencies = .{
         .httpz = .{

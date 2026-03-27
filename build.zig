@@ -21,6 +21,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     bebop_mod.addImport("pg", pg.module("pg"));
+    bebop_mod.addImport("httpz", httpz.module("httpz"));
 
     // Example application
     const exe = b.addExecutable(.{
@@ -31,8 +32,6 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
-    exe.root_module.addImport("httpz", httpz.module("httpz"));
-    exe.root_module.addImport("pg", pg.module("pg"));
     exe.root_module.addImport("bebop", bebop_mod);
 
     b.installArtifact(exe);
@@ -63,8 +62,6 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
-    app_tests.root_module.addImport("pg", pg.module("pg"));
-    app_tests.root_module.addImport("httpz", httpz.module("httpz"));
     app_tests.root_module.addImport("bebop", bebop_mod);
 
     const test_step = b.step("test", "Run unit tests");

@@ -1,8 +1,9 @@
 const App = @This();
 
 const std = @import("std");
-const httpz = @import("httpz");
-const pg = @import("pg");
+const bebop = @import("bebop");
+const httpz = bebop.httpz;
+const pg = bebop.pg;
 
 pub const RequestContext = struct {
     app: *App,

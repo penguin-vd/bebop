@@ -1,8 +1,8 @@
 const App = @import("../app.zig");
 
 const std = @import("std");
-const httpz = @import("httpz");
 const bebop = @import("bebop");
+const httpz = bebop.httpz;
 
 const Product = @import("../models/product.zig");
 const Category = @import("../models/category.zig");

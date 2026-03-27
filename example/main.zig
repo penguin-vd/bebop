@@ -1,10 +1,9 @@
 const std = @import("std");
-const httpz = @import("httpz");
-const pg = @import("pg");
+const bebop = @import("bebop");
+const httpz = bebop.httpz;
 
 const App = @import("app.zig");
 const routes = @import("routes.zig");
-const bebop = @import("bebop");
 
 const Product = @import("models/product.zig");
 const Category = @import("models/category.zig");
