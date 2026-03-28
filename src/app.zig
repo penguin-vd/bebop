@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const httpz = @import("httpz");
 const pg = @import("pg");
 
@@ -23,11 +24,16 @@ pub fn notFound(_: *App, req: *httpz.Request, res: *httpz.Response) !void {
 }
 
 pub fn dispatch(self: *App, action: httpz.Action(*RequestContext), req: *httpz.Request, res: *httpz.Response) !void {
-    var timer = try std.time.Timer.start();
+    if (comptime builtin.mode == .Debug) {
+        var timer = try std.time.Timer.start();
 
-    var ctx = RequestContext{ .app = self };
-    try action(&ctx, req, res);
+        var ctx = RequestContext{ .app = self };
+        try action(&ctx, req, res);
 
-    const elapsed = timer.lap() / 1000;
-    std.log.info("{d}\t{}\t{s}\t{d}us", .{ res.status, req.method, req.url.path, elapsed });
+        const elapsed = timer.lap() / 1000;
+        std.log.info("{d}\t{}\t{s}\t{d}us", .{ res.status, req.method, req.url.path, elapsed });
+    } else {
+        var ctx = RequestContext{ .app = self };
+        try action(&ctx, req, res);
+    }
 }

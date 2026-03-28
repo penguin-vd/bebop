@@ -3,6 +3,8 @@ const httpz = bebop.httpz;
 
 const pc = @import("controllers/product_controller.zig");
 const oc = @import("controllers/order_controller.zig");
+const cc = @import("controllers/category_controller.zig");
+const olc = @import("controllers/order_line_controller.zig");
 
 pub const Router = bebop.http.Router(*bebop.App, bebop.App.Action);
 pub const Group = bebop.http.Group(*bebop.App, bebop.App.Action);
@@ -16,6 +18,12 @@ pub fn register(router: *Router) !void {
 
     var orders = router.group("/api/orders");
     oc.register(&orders);
+
+    var categories = router.group("/api/categories");
+    cc.register(&categories);
+
+    var order_lines = router.group("/api/order-lines");
+    olc.register(&order_lines);
 }
 
 pub fn testing(ctx: *bebop.App.RequestContext, req: *httpz.Request, res: *httpz.Response) !void {
