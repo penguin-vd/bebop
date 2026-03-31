@@ -43,11 +43,6 @@ pub fn testing(ctx: *bebop.App.RequestContext, req: *httpz.Request, res: *httpz.
     try res.json(orders, .{});
 }
 
-pub fn health_check(ctx: *bebop.App.RequestContext, req: *httpz.Request, res: *httpz.Response) !void {
-    _ = req;
-
-    var conn = try ctx.app.db.acquire();
-    defer conn.release();
-
+pub fn health_check(_: *bebop.App.RequestContext, _: *httpz.Request, res: *httpz.Response) !void {
     try res.json(.{ .success = true }, .{});
 }

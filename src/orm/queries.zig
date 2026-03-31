@@ -168,6 +168,62 @@ pub fn build_create_table_query(
     return sql.toOwnedSlice(allocator);
 }
 
+pub fn build_pivot_table_queries(
+    allocator: std.mem.Allocator,
+    comptime Model: type,
+) ![]const []const u8 {
+    const owner_table = if (@hasDecl(Model, "table_name"))
+        Model.table_name
+    else
+        unreachable;
+
+    const struct_info = @typeInfo(Model).@"struct";
+    comptime var m2m_count: usize = 0;
+    inline for (struct_info.fields) |field| {
+        if (comptime utils.is_many_relation(field.type) and utils.is_many_to_many(Model, field.name)) {
+            m2m_count += 1;
+        }
+    }
+
+    if (m2m_count == 0) return &.{};
+
+    var results = try allocator.alloc([]const u8, m2m_count);
+    comptime var idx: usize = 0;
+
+    inline for (struct_info.fields) |field| {
+        if (comptime utils.is_many_relation(field.type) and utils.is_many_to_many(Model, field.name)) {
+            const ChildType = @typeInfo(field.type).pointer.child;
+            const related_table = ChildType.table_name;
+            const pivot_table = comptime utils.get_pivot_table_name(owner_table, related_table);
+            const owner_fk = comptime owner_table ++ "_id";
+            const related_fk = comptime related_table ++ "_id";
+
+            var sql: std.ArrayList(u8) = .{};
+            defer sql.deinit(allocator);
+
+            try sql.print(allocator,
+                "CREATE TABLE IF NOT EXISTS {s} (\n" ++
+                "  {s} INTEGER REFERENCES {s}(id) NOT NULL,\n" ++
+                "  {s} INTEGER REFERENCES {s}(id) NOT NULL,\n" ++
+                "  PRIMARY KEY ({s}, {s})\n" ++
+                ");", .{
+                pivot_table,
+                owner_fk,
+                owner_table,
+                related_fk,
+                related_table,
+                owner_fk,
+                related_fk,
+            });
+
+            results[idx] = try sql.toOwnedSlice(allocator);
+            idx += 1;
+        }
+    }
+
+    return results;
+}
+
 pub fn build_alter_table_query(
     allocator: std.mem.Allocator,
     comptime Model: type,

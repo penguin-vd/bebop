@@ -422,14 +422,41 @@ pub fn EntityManager(comptime Model: type) type {
             inline for (struct_info.fields) |field| {
                 if (comptime utils.is_many_relation(field.type)) {
                     const ChildType = @typeInfo(field.type).pointer.child;
-                    const back_ref = comptime findBackReferenceField(ChildType, T);
-                    const parent_pk = comptime utils.get_primary_key_info(T);
                     const child_pk = comptime utils.get_primary_key_info(ChildType);
 
-                    for (@field(entity, field.name)) |*child| {
-                        @field(@field(child.*, back_ref), parent_pk.name) = id;
-                        const child_id = try self.insertEntity(ChildType, child);
-                        @field(child.*, child_pk.name) = child_id;
+                    if (comptime utils.is_many_to_many(T, field.name)) {
+                        const pivot_table = comptime utils.get_pivot_table_name(
+                            T.table_name,
+                            ChildType.table_name,
+                        );
+                        const owner_fk = comptime T.table_name ++ "_id";
+                        const related_fk = comptime ChildType.table_name ++ "_id";
+                        const pivot_sql = comptime "INSERT INTO " ++ pivot_table ++ " (" ++ owner_fk ++ ", " ++ related_fk ++ ") VALUES ($1, $2)";
+
+                        for (@field(entity, field.name)) |*child| {
+                            var child_id = @field(child.*, child_pk.name);
+                            if (utils.is_falsy(child_pk.type, child_id)) {
+                                child_id = try self.insertEntity(ChildType, child);
+                                @field(child.*, child_pk.name) = child_id;
+                            }
+
+                            var pivot_stmt = try self.conn.prepare(pivot_sql);
+                            errdefer pivot_stmt.deinit();
+                            try pivot_stmt.bind(id);
+                            try pivot_stmt.bind(child_id);
+                            var pivot_result = try pivot_stmt.execute();
+                            defer pivot_result.deinit();
+                            while (try pivot_result.next()) |_| {}
+                        }
+                    } else {
+                        const back_ref = comptime findBackReferenceField(ChildType, T);
+                        const parent_pk = comptime utils.get_primary_key_info(T);
+
+                        for (@field(entity, field.name)) |*child| {
+                            @field(@field(child.*, back_ref), parent_pk.name) = id;
+                            const child_id = try self.insertEntity(ChildType, child);
+                            @field(child.*, child_pk.name) = child_id;
+                        }
                     }
                 }
             }
@@ -547,16 +574,53 @@ pub fn EntityManager(comptime Model: type) type {
             inline for (struct_info.fields) |field| {
                 if (comptime utils.is_many_relation(field.type)) {
                     const ChildType = @typeInfo(field.type).pointer.child;
-                    const back_ref = comptime findBackReferenceField(ChildType, T);
                     const child_pk = comptime utils.get_primary_key_info(ChildType);
 
-                    for (@field(entity, field.name)) |*child| {
-                        @field(@field(child.*, back_ref), parent_pk.name) = parent_id;
-                        if (utils.is_falsy(child_pk.type, @field(child.*, child_pk.name))) {
-                            const child_id = try self.insertEntity(ChildType, child);
-                            @field(child.*, child_pk.name) = child_id;
-                        } else {
-                            try self.updateEntity(ChildType, child);
+                    if (comptime utils.is_many_to_many(T, field.name)) {
+                        const pivot_table = comptime utils.get_pivot_table_name(
+                            T.table_name,
+                            ChildType.table_name,
+                        );
+                        const owner_fk = comptime T.table_name ++ "_id";
+                        const related_fk = comptime ChildType.table_name ++ "_id";
+
+                        // Delete existing pivot rows
+                        const delete_sql = comptime "DELETE FROM " ++ pivot_table ++ " WHERE " ++ owner_fk ++ " = $1";
+                        var delete_stmt = try self.conn.prepare(delete_sql);
+                        errdefer delete_stmt.deinit();
+                        try delete_stmt.bind(parent_id);
+                        var delete_result = try delete_stmt.execute();
+                        defer delete_result.deinit();
+                        while (try delete_result.next()) |_| {}
+
+                        // Re-insert pivot rows
+                        const pivot_sql = comptime "INSERT INTO " ++ pivot_table ++ " (" ++ owner_fk ++ ", " ++ related_fk ++ ") VALUES ($1, $2)";
+                        for (@field(entity, field.name)) |*child| {
+                            var child_id = @field(child.*, child_pk.name);
+                            if (utils.is_falsy(child_pk.type, child_id)) {
+                                child_id = try self.insertEntity(ChildType, child);
+                                @field(child.*, child_pk.name) = child_id;
+                            }
+
+                            var pivot_stmt = try self.conn.prepare(pivot_sql);
+                            errdefer pivot_stmt.deinit();
+                            try pivot_stmt.bind(parent_id);
+                            try pivot_stmt.bind(child_id);
+                            var pivot_result = try pivot_stmt.execute();
+                            defer pivot_result.deinit();
+                            while (try pivot_result.next()) |_| {}
+                        }
+                    } else {
+                        const back_ref = comptime findBackReferenceField(ChildType, T);
+
+                        for (@field(entity, field.name)) |*child| {
+                            @field(@field(child.*, back_ref), parent_pk.name) = parent_id;
+                            if (utils.is_falsy(child_pk.type, @field(child.*, child_pk.name))) {
+                                const child_id = try self.insertEntity(ChildType, child);
+                                @field(child.*, child_pk.name) = child_id;
+                            } else {
+                                try self.updateEntity(ChildType, child);
+                            }
                         }
                     }
                 }
@@ -569,11 +633,29 @@ pub fn EntityManager(comptime Model: type) type {
             else
                 unreachable;
 
-            var sql = std.ArrayList(u8){};
-            defer sql.deinit(self.allocator);
-
             const delete_pk = comptime utils.get_primary_key_info(Model);
             const pk_column_name = utils.get_column_name(Model, delete_pk.name);
+
+            // Delete pivot table rows for M2M relations before deleting the entity
+            const struct_info = @typeInfo(Model).@"struct";
+            inline for (struct_info.fields) |field| {
+                if (comptime utils.is_many_relation(field.type) and utils.is_many_to_many(Model, field.name)) {
+                    const ChildType = @typeInfo(field.type).pointer.child;
+                    const pivot_table = comptime utils.get_pivot_table_name(table_name, ChildType.table_name);
+                    const owner_fk = comptime table_name ++ "_id";
+                    const pivot_delete_sql = comptime "DELETE FROM " ++ pivot_table ++ " WHERE " ++ owner_fk ++ " = $1";
+
+                    var pivot_stmt = try self.conn.prepare(pivot_delete_sql);
+                    errdefer pivot_stmt.deinit();
+                    try pivot_stmt.bind(@field(entity.*, delete_pk.name));
+                    var pivot_result = try pivot_stmt.execute();
+                    defer pivot_result.deinit();
+                    while (try pivot_result.next()) |_| {}
+                }
+            }
+
+            var sql = std.ArrayList(u8){};
+            defer sql.deinit(self.allocator);
 
             try sql.print(self.allocator, "DELETE FROM {s} WHERE {s} = $1", .{ table_name, pk_column_name });
 

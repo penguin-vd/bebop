@@ -22,6 +22,7 @@ pub const JoinInfo = struct {
     primary_key: []const u8,
     alias: ?[]const u8 = null,
     relation_depth: usize = 0,
+    pivot_for: ?[]const u8 = null,
 };
 
 pub inline fn count_total_fields(Model: type, Parent: ?type) usize {
@@ -149,7 +150,11 @@ pub inline fn count_relations(Model: type, Parent: ?type) usize {
                                 continue;
                             }
                         }
-                        count += 1;
+                        if (utils.is_many_to_many(Model, field.name)) {
+                            count += 2; // pivot join + target join
+                        } else {
+                            count += 1;
+                        }
                         count += count_relations(ptr_info.child, Model);
                     }
                 },
@@ -217,37 +222,67 @@ pub inline fn fill_join_info(parent_table: []const u8, Model: type, Parent: ?typ
                         else
                             unreachable;
 
-                        const foreign_key = "id";
-
                         const alias = if (depth > 0) related_table_name ++ "_" ++ field.name else null;
 
-                        const primary_key = comptime blk: {
-                            const child_struct_info = @typeInfo(ptr_info.child).@"struct";
-                            for (child_struct_info.fields) |child_field| {
-                                if (utils.is_relation(child_field.type)) {
-                                    const ChildRelatedType = if (@typeInfo(child_field.type) == .optional)
-                                        @typeInfo(child_field.type).optional.child
-                                    else
-                                        child_field.type;
+                        if (comptime utils.is_many_to_many(Model, field.name)) {
+                            const owner_table = Model.table_name;
+                            const pivot_table = comptime utils.get_pivot_table_name(owner_table, related_table_name);
 
-                                    if (ChildRelatedType == Model) {
-                                        break :blk child_field.name ++ "_id";
+                            // First join: parent -> pivot table
+                            joins.*[idx] = .{
+                                .table_name = pivot_table,
+                                .join_type = .left,
+                                .foreign_key = "id",
+                                .foreign_table = parent_table,
+                                .primary_key = owner_table ++ "_id",
+                                .alias = null,
+                                .relation_depth = depth,
+                                .pivot_for = related_table_name,
+                            };
+                            idx += 1;
+
+                            // Second join: pivot table -> related table
+                            joins.*[idx] = .{
+                                .table_name = related_table_name,
+                                .join_type = .left,
+                                .foreign_key = related_table_name ++ "_id",
+                                .foreign_table = pivot_table,
+                                .primary_key = "id",
+                                .alias = alias,
+                                .relation_depth = depth,
+                            };
+                            idx += 1;
+                        } else {
+                            const foreign_key = "id";
+
+                            const primary_key = comptime blk: {
+                                const child_struct_info = @typeInfo(ptr_info.child).@"struct";
+                                for (child_struct_info.fields) |child_field| {
+                                    if (utils.is_relation(child_field.type)) {
+                                        const ChildRelatedType = if (@typeInfo(child_field.type) == .optional)
+                                            @typeInfo(child_field.type).optional.child
+                                        else
+                                            child_field.type;
+
+                                        if (ChildRelatedType == Model) {
+                                            break :blk child_field.name ++ "_id";
+                                        }
                                     }
                                 }
-                            }
-                            break :blk parent_table ++ "_id";
-                        };
+                                break :blk parent_table ++ "_id";
+                            };
 
-                        joins.*[idx] = .{
-                            .table_name = related_table_name,
-                            .join_type = .left,
-                            .foreign_key = foreign_key,
-                            .foreign_table = parent_table,
-                            .primary_key = primary_key,
-                            .alias = alias,
-                            .relation_depth = depth,
-                        };
-                        idx += 1;
+                            joins.*[idx] = .{
+                                .table_name = related_table_name,
+                                .join_type = .left,
+                                .foreign_key = foreign_key,
+                                .foreign_table = parent_table,
+                                .primary_key = primary_key,
+                                .alias = alias,
+                                .relation_depth = depth,
+                            };
+                            idx += 1;
+                        }
 
                         const next_parent = if (depth > 0) related_table_name ++ "_" ++ field.name else related_table_name;
                         idx = fill_join_info(next_parent, ptr_info.child, Model, joins, idx, depth + 1);

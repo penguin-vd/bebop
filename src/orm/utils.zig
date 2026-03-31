@@ -20,6 +20,7 @@ pub fn FieldMeta(comptime T: type) type {
         is_primary_key: bool = false,
         is_unique: bool = false,
         is_auto_increment: bool = false,
+        many_to_many: bool = false,
         max_length: ?usize = null,
         column_name: ?[]const u8 = null,
         default_value: ?[]const u8 = null,
@@ -101,6 +102,16 @@ pub fn is_one_relation(comptime T: type) bool {
 
 pub fn is_relation(comptime T: type) bool {
     return is_one_relation(T) or is_many_relation(T);
+}
+
+pub fn is_many_to_many(comptime Model: type, comptime field_name: []const u8) bool {
+    if (!@hasDecl(Model, "field_meta")) return false;
+    const meta = get_field_meta(Model, field_name) orelse return false;
+    return meta.many_to_many;
+}
+
+pub fn get_pivot_table_name(comptime owner_table: []const u8, comptime related_table: []const u8) []const u8 {
+    return owner_table ++ "_" ++ related_table;
 }
 
 pub fn to_sql_type(comptime T: type) []const u8 {

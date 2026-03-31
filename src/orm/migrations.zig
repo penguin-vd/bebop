@@ -67,6 +67,38 @@ pub fn make_migration(allocator: std.mem.Allocator, db: *pg.Pool, comptime Model
     try file.writeAll(sql);
 
     std.debug.print("Created migration: {s}\n", .{migration_name});
+
+    // Generate pivot table migrations for M2M relations
+    const pivot_queries = try queries.build_pivot_table_queries(allocator, Model);
+    defer {
+        for (pivot_queries) |pq| allocator.free(pq);
+        allocator.free(pivot_queries);
+    }
+
+    for (pivot_queries) |pivot_sql| {
+        if (pivot_sql.len == 0) continue;
+
+        const pivot_timestamp = std.time.timestamp();
+        const pivot_migration_name = try std.fmt.allocPrint(
+            allocator,
+            "{d}_{s}_pivot.sql",
+            .{ pivot_timestamp, table_name },
+        );
+        defer allocator.free(pivot_migration_name);
+
+        const pivot_file_path = try std.fs.path.join(
+            allocator,
+            &[_][]const u8{ "migrations", pivot_migration_name },
+        );
+        defer allocator.free(pivot_file_path);
+
+        const pivot_file = try std.fs.cwd().createFile(pivot_file_path, .{});
+        defer pivot_file.close();
+
+        try pivot_file.writeAll(pivot_sql);
+
+        std.debug.print("Created pivot migration: {s}\n", .{pivot_migration_name});
+    }
 }
 
 pub fn migrate(allocator: std.mem.Allocator, db: *pg.Pool) !void {

@@ -26,9 +26,11 @@ test "test create product with existing category" {
 
     try std.testing.expect(category.id != 0);
 
+    var categories = [_]Category{category.*};
+
     const product = try em.create(.{
         .name = "Laptop",
-        .category = category.*,
+        .categories = &categories,
     });
 
     try std.testing.expectEqual(@as(i32, 0), product.id);
@@ -36,7 +38,8 @@ test "test create product with existing category" {
     try em.flush();
 
     try std.testing.expect(product.id != 0);
-    try std.testing.expectEqual(category.id, product.category.id);
+    try std.testing.expectEqual(@as(usize, 1), product.categories.len);
+    try std.testing.expectEqual(category.id, product.categories[0].id);
 }
 
 test "test create product with new category" {
@@ -53,19 +56,20 @@ test "test create product with new category" {
     var em = bebop.orm.EntityManager(Product).init(allocator, conn);
     defer em.deinit();
 
-    // Create product with an unsaved category
+    var categories = [_]Category{.{ .name = "Electronics" }};
+
     const product = try em.create(.{
         .name = "Phone",
-        .category = .{ .name = "Electronics" },
+        .categories = &categories,
     });
 
     try std.testing.expectEqual(@as(i32, 0), product.id);
-    try std.testing.expectEqual(@as(i32, 0), product.category.id);
 
     try em.flush();
 
     try std.testing.expect(product.id != 0);
-    try std.testing.expect(product.category.id != 0);
+    try std.testing.expectEqual(@as(usize, 1), product.categories.len);
+    try std.testing.expect(product.categories[0].id != 0);
 }
 
 test "test list products" {
@@ -92,9 +96,11 @@ test "test list products" {
 
     try std.testing.expectEqual(@as(usize, 0), empty.len);
 
+    var categories = [_]Category{.{ .name = "Test Category" }};
+
     _ = try em.create(.{
         .name = "Test Product",
-        .category = .{ .name = "Test Category" },
+        .categories = &categories,
     });
     try em.flush();
 
@@ -121,13 +127,16 @@ test "test filtering products" {
     var em = bebop.orm.EntityManager(Product).init(allocator, conn);
     defer em.deinit();
 
+    var cats1 = [_]Category{.{ .name = "Electronics" }};
+    var cats2 = [_]Category{.{ .name = "Literature" }};
+
     _ = try em.create(.{
         .name = "Laptop",
-        .category = .{ .name = "Electronics" },
+        .categories = &cats1,
     });
     _ = try em.create(.{
         .name = "Book",
-        .category = .{ .name = "Literature" },
+        .categories = &cats2,
     });
     try em.flush();
 
@@ -144,10 +153,10 @@ test "test filtering products" {
 
     try qb.whereILike("name", "Gibberish");
 
-    const empty = try em.find(&qb);
-    defer em.freeModels(empty);
+    const noone = try em.find(&qb);
+    defer em.freeModels(noone);
 
-    try std.testing.expectEqual(@as(usize, 0), empty.len);
+    try std.testing.expectEqual(@as(usize, 0), noone.len);
 }
 
 test "test get product" {
@@ -164,9 +173,11 @@ test "test get product" {
     var em = bebop.orm.EntityManager(Product).init(allocator, conn);
     defer em.deinit();
 
+    var categories = [_]Category{.{ .name = "Test Category" }};
+
     const createdProduct = try em.create(.{
         .name = "Test Product",
-        .category = .{ .name = "Test Category" },
+        .categories = &categories,
     });
 
     defer allocator.destroy(createdProduct);
@@ -183,7 +194,8 @@ test "test get product" {
         defer em.freeModel(p);
 
         try std.testing.expectEqual(p.id, createdProduct.id);
-        try std.testing.expect(p.category.id != 0);
+        try std.testing.expectEqual(@as(usize, 1), p.categories.len);
+        try std.testing.expect(p.categories[0].id != 0);
         try std.testing.expectEqualStrings(createdProduct.name, p.name);
     }
 }
@@ -202,9 +214,11 @@ test "test update product" {
     var em = bebop.orm.EntityManager(Product).init(allocator, conn);
     defer em.deinit();
 
+    var categories = [_]Category{.{ .name = "Electronics" }};
+
     const createdProduct = try em.create(.{
         .name = "Old Name",
-        .category = .{ .name = "Electronics" },
+        .categories = &categories,
     });
     defer allocator.destroy(createdProduct);
 
@@ -226,7 +240,7 @@ test "test update product" {
     }
 }
 
-test "test update product category to existing" {
+test "test update product categories" {
     const allocator = std.testing.allocator;
 
     var pool = try bebop.testing.setup_testing_enviroment(allocator);
@@ -247,16 +261,20 @@ test "test update product category to existing" {
     const cat2 = try cat_em.create(.{ .name = "Books" });
     try cat_em.flush();
 
+    var categories = [_]Category{cat1.*};
+
     const createdProduct = try em.create(.{
         .name = "Product",
-        .category = cat1.*,
+        .categories = &categories,
     });
     defer allocator.destroy(createdProduct);
     try em.flush();
 
     const original_id = createdProduct.id;
 
-    createdProduct.category = cat2.*;
+    // Update to use cat2 instead
+    var new_categories = [_]Category{cat2.*};
+    createdProduct.categories = &new_categories;
     try em.flush();
 
     em.clear();
@@ -265,43 +283,8 @@ test "test update product category to existing" {
     try std.testing.expect(product != null);
 
     defer em.freeModel(product.?);
-    try std.testing.expectEqual(cat2.id, product.?.category.id);
-}
-
-test "test update product category to new" {
-    const allocator = std.testing.allocator;
-
-    var pool = try bebop.testing.setup_testing_enviroment(allocator);
-    defer pool.deinit();
-
-    defer bebop.testing.cleanup_testing_database(pool, allocator) catch {};
-
-    var conn = try pool.acquire();
-    defer conn.release();
-
-    var em = bebop.orm.EntityManager(Product).init(allocator, conn);
-    defer em.deinit();
-
-    const createdProduct = try em.create(.{
-        .name = "Product",
-        .category = .{ .name = "Old Category" },
-    });
-    defer allocator.destroy(createdProduct);
-    try em.flush();
-
-    const old_category_id = createdProduct.category.id;
-
-    createdProduct.category = .{ .name = "New Category" };
-    try em.flush();
-
-    em.clear();
-
-    const product = try em.get(createdProduct.id);
-    try std.testing.expect(product != null);
-
-    defer em.freeModel(product.?);
-    try std.testing.expect(product.?.category.id != 0);
-    try std.testing.expect(product.?.category.id != old_category_id);
+    try std.testing.expectEqual(@as(usize, 1), product.?.categories.len);
+    try std.testing.expectEqual(cat2.id, product.?.categories[0].id);
 }
 
 test "delete product" {
@@ -318,9 +301,11 @@ test "delete product" {
     var em = bebop.orm.EntityManager(Product).init(allocator, conn);
     defer em.deinit();
 
+    var categories = [_]Category{.{ .name = "Test Category" }};
+
     const product = try em.create(.{
         .name = "Test Product",
-        .category = .{ .name = "Test Category" },
+        .categories = &categories,
     });
     try em.flush();
 
@@ -354,18 +339,97 @@ test "test multiple products same category" {
     const category = try cat_em.create(.{ .name = "Electronics" });
     try cat_em.flush();
 
+    var cats1 = [_]Category{category.*};
+    var cats2 = [_]Category{category.*};
+
     const product1 = try em.create(.{
         .name = "Laptop",
-        .category = category.*,
+        .categories = &cats1,
     });
     const product2 = try em.create(.{
         .name = "Phone",
-        .category = category.*,
+        .categories = &cats2,
     });
     try em.flush();
 
     try std.testing.expect(product1.id != 0);
     try std.testing.expect(product2.id != 0);
-    try std.testing.expectEqual(category.id, product1.category.id);
-    try std.testing.expectEqual(category.id, product2.category.id);
+    try std.testing.expectEqual(category.id, product1.categories[0].id);
+    try std.testing.expectEqual(category.id, product2.categories[0].id);
+}
+
+test "test create product with multiple new category" {
+    const allocator = std.testing.allocator;
+
+    var pool = try bebop.testing.setup_testing_enviroment(allocator);
+    defer pool.deinit();
+
+    defer bebop.testing.cleanup_testing_database(pool, allocator) catch {};
+
+    var conn = try pool.acquire();
+    defer conn.release();
+
+    var em = bebop.orm.EntityManager(Product).init(allocator, conn);
+    defer em.deinit();
+
+    var categories = [_]Category{
+        .{ .name = "Electronics" },
+        .{ .name = "Handheld" },
+    };
+
+    const product = try em.create(.{
+        .name = "Phone",
+        .categories = &categories,
+    });
+
+    try std.testing.expectEqual(@as(i32, 0), product.id);
+
+    try em.flush();
+
+    try std.testing.expect(product.id != 0);
+    try std.testing.expectEqual(@as(usize, 2), product.categories.len);
+    try std.testing.expect(product.categories[0].id != 0);
+    try std.testing.expect(product.categories[1].id != 0);
+}
+
+test "test create product with existing category and new category" {
+    const allocator = std.testing.allocator;
+
+    var pool = try bebop.testing.setup_testing_enviroment(allocator);
+    defer pool.deinit();
+
+    defer bebop.testing.cleanup_testing_database(pool, allocator) catch {};
+
+    var conn = try pool.acquire();
+    defer conn.release();
+
+    var em = bebop.orm.EntityManager(Product).init(allocator, conn);
+    defer em.deinit();
+
+    var cat_em = bebop.orm.EntityManager(Category).init(allocator, conn);
+    defer cat_em.deinit();
+
+    const category = try cat_em.create(.{ .name = "Electronics" });
+    try cat_em.flush();
+
+    try std.testing.expect(category.id != 0);
+
+    var categories = [_]Category{
+        category.*,
+        .{ .name = "Handheld" },
+    };
+
+    const product = try em.create(.{
+        .name = "Laptop",
+        .categories = &categories,
+    });
+
+    try std.testing.expectEqual(@as(i32, 0), product.id);
+
+    try em.flush();
+
+    try std.testing.expect(product.id != 0);
+    try std.testing.expectEqual(@as(usize, 2), product.categories.len);
+    try std.testing.expectEqual(category.id, product.categories[0].id);
+    try std.testing.expect(product.categories[1].id != 0);
 }

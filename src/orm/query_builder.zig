@@ -124,7 +124,7 @@ pub fn QueryBuilder(comptime Model: type) type {
             comptime CurrentType: type,
             field_str: []const u8,
             prefix_path: ?[]const []const u8,
-        ) !ParsedField {
+        ) error{ InvalidRelationType, RelationNotFound, InvalidFieldName, OutOfMemory }!ParsedField {
             if (std.mem.indexOf(u8, field_str, ".")) |dot_index| {
                 const relation_name = field_str[0..dot_index];
                 const remaining = field_str[dot_index + 1 ..];
@@ -153,6 +153,24 @@ pub fn QueryBuilder(comptime Model: type) type {
                                 }
 
                                 return try parseFieldNameRecursive(allocator, NextType, remaining, new_path);
+                            },
+                            .pointer => |ptr| {
+                                if (ptr.size == .slice and @typeInfo(ptr.child) == .@"struct") {
+                                    const new_path_len = if (prefix_path) |p| p.len + 1 else 1;
+                                    var new_path = try allocator.alloc([]const u8, new_path_len);
+                                    errdefer allocator.free(new_path);
+
+                                    if (prefix_path) |p| {
+                                        @memcpy(new_path[0..p.len], p);
+                                        new_path[p.len] = relation_name;
+                                        allocator.free(p);
+                                    } else {
+                                        new_path[0] = relation_name;
+                                    }
+
+                                    return try parseFieldNameRecursive(allocator, ptr.child, remaining, new_path);
+                                }
+                                return error.InvalidRelationType;
                             },
                             else => return error.InvalidRelationType,
                         }
@@ -313,19 +331,22 @@ pub fn QueryBuilder(comptime Model: type) type {
             });
         }
 
-        fn isRelationInUse(self: *Self, join_table_name: []const u8) bool {
+        fn isRelationInUse(self: *Self, join: ft.JoinInfo) bool {
             if (self.select_columns == null) {
                 return true;
             }
 
+            // For pivot joins, check if the target table is in use
+            const table_to_check = if (join.pivot_for) |target| target else join.table_name;
+
             for (self.select_columns.?) |parsed_field| {
-                if (std.mem.eql(u8, parsed_field.table_name, join_table_name)) {
+                if (std.mem.eql(u8, parsed_field.table_name, table_to_check)) {
                     return true;
                 }
             }
 
             for (self.where_conditions.items) |cond| {
-                if (std.mem.eql(u8, cond.table_name, join_table_name)) {
+                if (std.mem.eql(u8, cond.table_name, table_to_check)) {
                     return true;
                 }
             }
@@ -366,7 +387,7 @@ pub fn QueryBuilder(comptime Model: type) type {
             try sql.print(self.allocator, " FROM {s}", .{table_name});
 
             inline for (all_joins) |join| {
-                if (self.isRelationInUse(join.table_name)) {
+                if (self.isRelationInUse(join)) {
                     const join_keyword = switch (join.join_type) {
                         .left => "LEFT JOIN",
                         .inner => "INNER JOIN",

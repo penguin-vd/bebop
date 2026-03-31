@@ -7,17 +7,18 @@ const Product = @import("../models/product.zig");
 const Category = @import("../models/category.zig");
 
 fn createProduct(allocator: std.mem.Allocator, conn: anytype, name: []const u8, category_name: []const u8) !Product {
-    _ = allocator;
-    var cat_em = bebop.orm.EntityManager(Category).init(std.testing.allocator, conn);
+    var cat_em = bebop.orm.EntityManager(Category).init(allocator, conn);
     defer cat_em.deinit();
 
     const cat = try cat_em.create(.{ .name = category_name });
     try cat_em.flush();
 
-    var prod_em = bebop.orm.EntityManager(Product).init(std.testing.allocator, conn);
+    var prod_em = bebop.orm.EntityManager(Product).init(allocator, conn);
     defer prod_em.deinit();
 
-    const prod = try prod_em.create(.{ .name = name, .category = cat.* });
+    var categories = [_]Category{cat.*};
+
+    const prod = try prod_em.create(.{ .name = name, .categories = &categories });
     try prod_em.flush();
 
     return prod.*;

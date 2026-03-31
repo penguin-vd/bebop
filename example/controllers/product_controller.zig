@@ -67,27 +67,31 @@ fn create(ctx: *bebop.App.RequestContext, req: *httpz.Request, res: *httpz.Respo
 
     const body = req.json(struct {
         name: []const u8,
-        category: i32,
+        categories: []const i32,
     }) catch null;
 
     if (body) |dto| {
-        const found_category = try category_em.get(dto.category);
+        var categories = try res.arena.alloc(Category, dto.categories.len);
 
-        if (found_category) |category| {
-            defer category_em.freeModel(category);
+        for (dto.categories, 0..) |category_id, i| {
+            const found_category = try category_em.get(category_id);
 
-            const product = try em.create(.{
-                .name = dto.name,
-                .category = category.*,
-            });
-            try em.flush();
-
-            try res.json(product, .{});
-            return;
+            if (found_category) |category| {
+                categories[i] = category.*;
+            } else {
+                res.setStatus(.not_found);
+                try res.json(.{ .message = "Category not found" }, .{});
+                return;
+            }
         }
 
-        res.setStatus(.not_found);
-        try res.json(.{ .message = "Category not found" }, .{});
+        const product = try em.create(.{
+            .name = dto.name,
+            .categories = categories,
+        });
+        try em.flush();
+
+        try res.json(product, .{});
         return;
     }
 
@@ -126,7 +130,7 @@ fn update(ctx: *bebop.App.RequestContext, req: *httpz.Request, res: *httpz.Respo
 
     const body = req.json(struct {
         name: ?[]const u8 = null,
-        category: ?i32 = null,
+        categories: ?[]const i32 = null,
     }) catch null;
 
     if (body) |dto| {
@@ -137,16 +141,22 @@ fn update(ctx: *bebop.App.RequestContext, req: *httpz.Request, res: *httpz.Respo
                 product.name = name;
             }
 
-            if (dto.category) |category_id| {
-                const found_category = try category_em.get(category_id);
+            if (dto.categories) |category_ids| {
+                var categories = try res.arena.alloc(Category, category_ids.len);
 
-                if (found_category) |category| {
-                    product.category = category.*;
-                } else {
-                    res.setStatus(.not_found);
-                    try res.json(.{ .message = "Category not found" }, .{});
-                    return;
+                for (category_ids, 0..) |category_id, i| {
+                    const found_category = try category_em.get(category_id);
+
+                    if (found_category) |category| {
+                        categories[i] = category.*;
+                    } else {
+                        res.setStatus(.not_found);
+                        try res.json(.{ .message = "Category not found" }, .{});
+                        return;
+                    }
                 }
+
+                product.categories = categories;
             }
 
             try em.flush();
