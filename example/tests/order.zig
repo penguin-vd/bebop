@@ -27,11 +27,10 @@ fn createProduct(allocator: std.mem.Allocator, conn: anytype, name: []const u8, 
 test "create order with order lines" {
     const allocator = std.testing.allocator;
 
-    var pool = try bebop.testing.setup_testing_enviroment(allocator);
-    defer pool.deinit();
-    defer bebop.testing.cleanup_testing_database(pool, allocator) catch {};
+    var env = try bebop.testing.TestEnvironment.init(allocator);
+    defer env.deinit();
 
-    var conn = try pool.acquire();
+    var conn = try env.pool.acquire();
     defer conn.release();
 
     const product = try createProduct(allocator, conn, "Laptop", "Electronics");
@@ -62,11 +61,10 @@ test "create order with order lines" {
 test "list orders with order lines loaded" {
     const allocator = std.testing.allocator;
 
-    var pool = try bebop.testing.setup_testing_enviroment(allocator);
-    defer pool.deinit();
-    defer bebop.testing.cleanup_testing_database(pool, allocator) catch {};
+    var env = try bebop.testing.TestEnvironment.init(allocator);
+    defer env.deinit();
 
-    var conn = try pool.acquire();
+    var conn = try env.pool.acquire();
     defer conn.release();
 
     const product = try createProduct(allocator, conn, "Phone", "Gadgets");
@@ -95,11 +93,10 @@ test "list orders with order lines loaded" {
 test "get order by id" {
     const allocator = std.testing.allocator;
 
-    var pool = try bebop.testing.setup_testing_enviroment(allocator);
-    defer pool.deinit();
-    defer bebop.testing.cleanup_testing_database(pool, allocator) catch {};
+    var env = try bebop.testing.TestEnvironment.init(allocator);
+    defer env.deinit();
 
-    var conn = try pool.acquire();
+    var conn = try env.pool.acquire();
     defer conn.release();
 
     const product = try createProduct(allocator, conn, "Tablet", "Devices");
@@ -131,11 +128,10 @@ test "get order by id" {
 test "update order reference" {
     const allocator = std.testing.allocator;
 
-    var pool = try bebop.testing.setup_testing_enviroment(allocator);
-    defer pool.deinit();
-    defer bebop.testing.cleanup_testing_database(pool, allocator) catch {};
+    var env = try bebop.testing.TestEnvironment.init(allocator);
+    defer env.deinit();
 
-    var conn = try pool.acquire();
+    var conn = try env.pool.acquire();
     defer conn.release();
 
     const product = try createProduct(allocator, conn, "Monitor", "Electronics");
@@ -167,11 +163,10 @@ test "update order reference" {
 test "add order line to existing order" {
     const allocator = std.testing.allocator;
 
-    var pool = try bebop.testing.setup_testing_enviroment(allocator);
-    defer pool.deinit();
-    defer bebop.testing.cleanup_testing_database(pool, allocator) catch {};
+    var env = try bebop.testing.TestEnvironment.init(allocator);
+    defer env.deinit();
 
-    var conn = try pool.acquire();
+    var conn = try env.pool.acquire();
     defer conn.release();
 
     const product = try createProduct(allocator, conn, "Keyboard", "Peripherals");
@@ -216,11 +211,10 @@ test "add order line to existing order" {
 test "delete order" {
     const allocator = std.testing.allocator;
 
-    var pool = try bebop.testing.setup_testing_enviroment(allocator);
-    defer pool.deinit();
-    defer bebop.testing.cleanup_testing_database(pool, allocator) catch {};
+    var env = try bebop.testing.TestEnvironment.init(allocator);
+    defer env.deinit();
 
-    var conn = try pool.acquire();
+    var conn = try env.pool.acquire();
     defer conn.release();
 
     const product = try createProduct(allocator, conn, "Mouse", "Peripherals");

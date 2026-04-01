@@ -6,12 +6,10 @@ const Category = @import("../models/category.zig");
 test "test create category" {
     const allocator = std.testing.allocator;
 
-    var pool = try bebop.testing.setup_testing_enviroment(allocator);
-    defer pool.deinit();
+    var env = try bebop.testing.TestEnvironment.init(allocator);
+    defer env.deinit();
 
-    defer bebop.testing.cleanup_testing_database(pool, allocator) catch {};
-
-    var conn = try pool.acquire();
+    var conn = try env.pool.acquire();
     defer conn.release();
 
     var em = bebop.orm.EntityManager(Category).init(allocator, conn);
@@ -29,12 +27,10 @@ test "test create category" {
 test "test list categories" {
     const allocator = std.testing.allocator;
 
-    var pool = try bebop.testing.setup_testing_enviroment(allocator);
-    defer pool.deinit();
+    var env = try bebop.testing.TestEnvironment.init(allocator);
+    defer env.deinit();
 
-    defer bebop.testing.cleanup_testing_database(pool, allocator) catch {};
-
-    var conn = try pool.acquire();
+    var conn = try env.pool.acquire();
     defer conn.release();
 
     var em = bebop.orm.EntityManager(Category).init(allocator, conn);
@@ -65,12 +61,10 @@ test "test list categories" {
 test "test filtering categories" {
     const allocator = std.testing.allocator;
 
-    var pool = try bebop.testing.setup_testing_enviroment(allocator);
-    defer pool.deinit();
+    var env = try bebop.testing.TestEnvironment.init(allocator);
+    defer env.deinit();
 
-    defer bebop.testing.cleanup_testing_database(pool, allocator) catch {};
-
-    var conn = try pool.acquire();
+    var conn = try env.pool.acquire();
     defer conn.release();
 
     var em = bebop.orm.EntityManager(Category).init(allocator, conn);
@@ -101,12 +95,10 @@ test "test filtering categories" {
 test "test get category" {
     const allocator = std.testing.allocator;
 
-    var pool = try bebop.testing.setup_testing_enviroment(allocator);
-    defer pool.deinit();
+    var env = try bebop.testing.TestEnvironment.init(allocator);
+    defer env.deinit();
 
-    defer bebop.testing.cleanup_testing_database(pool, allocator) catch {};
-
-    var conn = try pool.acquire();
+    var conn = try env.pool.acquire();
     defer conn.release();
 
     var em = bebop.orm.EntityManager(Category).init(allocator, conn);
@@ -128,12 +120,10 @@ test "test get category" {
 test "delete category" {
     const allocator = std.testing.allocator;
 
-    var pool = try bebop.testing.setup_testing_enviroment(allocator);
-    defer pool.deinit();
+    var env = try bebop.testing.TestEnvironment.init(allocator);
+    defer env.deinit();
 
-    defer bebop.testing.cleanup_testing_database(pool, allocator) catch {};
-
-    var conn = try pool.acquire();
+    var conn = try env.pool.acquire();
     defer conn.release();
 
     var em = bebop.orm.EntityManager(Category).init(allocator, conn);
