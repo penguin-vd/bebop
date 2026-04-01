@@ -7,10 +7,7 @@ const Category = @import("../models/category.zig");
 test "test create product with existing category" {
     const allocator = std.testing.allocator;
 
-    var env = try bebop.testing.TestEnvironment.init(allocator);
-    defer env.deinit();
-
-    var conn = try env.pool.acquire();
+    var conn = try bebop.testing.pool().acquire();
     defer conn.release();
 
     var em = bebop.orm.EntityManager(Product).init(allocator, conn);
@@ -43,10 +40,7 @@ test "test create product with existing category" {
 test "test create product with new category" {
     const allocator = std.testing.allocator;
 
-    var env = try bebop.testing.TestEnvironment.init(allocator);
-    defer env.deinit();
-
-    var conn = try env.pool.acquire();
+    var conn = try bebop.testing.pool().acquire();
     defer conn.release();
 
     var em = bebop.orm.EntityManager(Product).init(allocator, conn);
@@ -71,10 +65,7 @@ test "test create product with new category" {
 test "test list products" {
     const allocator = std.testing.allocator;
 
-    var env = try bebop.testing.TestEnvironment.init(allocator);
-    defer env.deinit();
-
-    var conn = try env.pool.acquire();
+    var conn = try bebop.testing.pool().acquire();
     defer conn.release();
 
     var em = bebop.orm.EntityManager(Product).init(allocator, conn);
@@ -110,10 +101,7 @@ test "test list products" {
 test "test filtering products" {
     const allocator = std.testing.allocator;
 
-    var env = try bebop.testing.TestEnvironment.init(allocator);
-    defer env.deinit();
-
-    var conn = try env.pool.acquire();
+    var conn = try bebop.testing.pool().acquire();
     defer conn.release();
 
     var em = bebop.orm.EntityManager(Product).init(allocator, conn);
@@ -154,10 +142,7 @@ test "test filtering products" {
 test "test get product" {
     const allocator = std.testing.allocator;
 
-    var env = try bebop.testing.TestEnvironment.init(allocator);
-    defer env.deinit();
-
-    var conn = try env.pool.acquire();
+    var conn = try bebop.testing.pool().acquire();
     defer conn.release();
 
     var em = bebop.orm.EntityManager(Product).init(allocator, conn);
@@ -193,10 +178,7 @@ test "test get product" {
 test "test update product" {
     const allocator = std.testing.allocator;
 
-    var env = try bebop.testing.TestEnvironment.init(allocator);
-    defer env.deinit();
-
-    var conn = try env.pool.acquire();
+    var conn = try bebop.testing.pool().acquire();
     defer conn.release();
 
     var em = bebop.orm.EntityManager(Product).init(allocator, conn);
@@ -231,10 +213,7 @@ test "test update product" {
 test "test update product categories" {
     const allocator = std.testing.allocator;
 
-    var env = try bebop.testing.TestEnvironment.init(allocator);
-    defer env.deinit();
-
-    var conn = try env.pool.acquire();
+    var conn = try bebop.testing.pool().acquire();
     defer conn.release();
 
     var em = bebop.orm.EntityManager(Product).init(allocator, conn);
@@ -276,10 +255,7 @@ test "test update product categories" {
 test "delete product" {
     const allocator = std.testing.allocator;
 
-    var env = try bebop.testing.TestEnvironment.init(allocator);
-    defer env.deinit();
-
-    var conn = try env.pool.acquire();
+    var conn = try bebop.testing.pool().acquire();
     defer conn.release();
 
     var em = bebop.orm.EntityManager(Product).init(allocator, conn);
@@ -306,10 +282,7 @@ test "delete product" {
 test "test multiple products same category" {
     const allocator = std.testing.allocator;
 
-    var env = try bebop.testing.TestEnvironment.init(allocator);
-    defer env.deinit();
-
-    var conn = try env.pool.acquire();
+    var conn = try bebop.testing.pool().acquire();
     defer conn.release();
 
     var em = bebop.orm.EntityManager(Product).init(allocator, conn);
@@ -343,10 +316,7 @@ test "test multiple products same category" {
 test "test create product with multiple new category" {
     const allocator = std.testing.allocator;
 
-    var env = try bebop.testing.TestEnvironment.init(allocator);
-    defer env.deinit();
-
-    var conn = try env.pool.acquire();
+    var conn = try bebop.testing.pool().acquire();
     defer conn.release();
 
     var em = bebop.orm.EntityManager(Product).init(allocator, conn);
@@ -375,10 +345,7 @@ test "test create product with multiple new category" {
 test "test create product with existing category and new category" {
     const allocator = std.testing.allocator;
 
-    var env = try bebop.testing.TestEnvironment.init(allocator);
-    defer env.deinit();
-
-    var conn = try env.pool.acquire();
+    var conn = try bebop.testing.pool().acquire();
     defer conn.release();
 
     var em = bebop.orm.EntityManager(Product).init(allocator, conn);

@@ -27,10 +27,7 @@ fn createProduct(allocator: std.mem.Allocator, conn: anytype, name: []const u8, 
 test "create order with order lines" {
     const allocator = std.testing.allocator;
 
-    var env = try bebop.testing.TestEnvironment.init(allocator);
-    defer env.deinit();
-
-    var conn = try env.pool.acquire();
+    var conn = try bebop.testing.pool().acquire();
     defer conn.release();
 
     const product = try createProduct(allocator, conn, "Laptop", "Electronics");
@@ -61,10 +58,7 @@ test "create order with order lines" {
 test "list orders with order lines loaded" {
     const allocator = std.testing.allocator;
 
-    var env = try bebop.testing.TestEnvironment.init(allocator);
-    defer env.deinit();
-
-    var conn = try env.pool.acquire();
+    var conn = try bebop.testing.pool().acquire();
     defer conn.release();
 
     const product = try createProduct(allocator, conn, "Phone", "Gadgets");
@@ -93,10 +87,7 @@ test "list orders with order lines loaded" {
 test "get order by id" {
     const allocator = std.testing.allocator;
 
-    var env = try bebop.testing.TestEnvironment.init(allocator);
-    defer env.deinit();
-
-    var conn = try env.pool.acquire();
+    var conn = try bebop.testing.pool().acquire();
     defer conn.release();
 
     const product = try createProduct(allocator, conn, "Tablet", "Devices");
@@ -128,10 +119,7 @@ test "get order by id" {
 test "update order reference" {
     const allocator = std.testing.allocator;
 
-    var env = try bebop.testing.TestEnvironment.init(allocator);
-    defer env.deinit();
-
-    var conn = try env.pool.acquire();
+    var conn = try bebop.testing.pool().acquire();
     defer conn.release();
 
     const product = try createProduct(allocator, conn, "Monitor", "Electronics");
@@ -163,10 +151,7 @@ test "update order reference" {
 test "add order line to existing order" {
     const allocator = std.testing.allocator;
 
-    var env = try bebop.testing.TestEnvironment.init(allocator);
-    defer env.deinit();
-
-    var conn = try env.pool.acquire();
+    var conn = try bebop.testing.pool().acquire();
     defer conn.release();
 
     const product = try createProduct(allocator, conn, "Keyboard", "Peripherals");
@@ -208,13 +193,53 @@ test "add order line to existing order" {
     try std.testing.expectEqual(@as(usize, 2), orders[0].order_lines.len);
 }
 
+test "create order with many order lines" {
+    const allocator = std.testing.allocator;
+
+    var conn = try bebop.testing.pool().acquire();
+    defer conn.release();
+
+    const product = try createProduct(allocator, conn, "Bulk Item", "Warehouse");
+
+    var em = bebop.orm.EntityManager(Order).init(allocator, conn);
+    defer em.deinit();
+
+    const line_count = 100;
+    const lines = try allocator.alloc(OrderLine, line_count);
+    defer allocator.free(lines);
+
+    for (lines, 0..) |*line, i| {
+        line.* = .{ .quantity = @intCast(i + 1), .order = std.mem.zeroes(Order), .product = product };
+    }
+
+    const order = try em.create(.{ .reference = "ORD-BULK", .order_lines = lines });
+    defer allocator.destroy(order);
+    try em.flush();
+
+    try std.testing.expect(order.id != 0);
+    try std.testing.expectEqual(@as(usize, line_count), order.order_lines.len);
+
+    for (lines) |line| {
+        try std.testing.expect(line.id != 0);
+    }
+
+    em.clear();
+
+    var qb = em.query();
+    defer qb.deinit();
+    try qb.where("id", "=", order.id);
+
+    const orders = try em.find(&qb);
+    defer em.freeModels(orders);
+
+    try std.testing.expectEqual(@as(usize, 1), orders.len);
+    try std.testing.expectEqual(@as(usize, line_count), orders[0].order_lines.len);
+}
+
 test "delete order" {
     const allocator = std.testing.allocator;
 
-    var env = try bebop.testing.TestEnvironment.init(allocator);
-    defer env.deinit();
-
-    var conn = try env.pool.acquire();
+    var conn = try bebop.testing.pool().acquire();
     defer conn.release();
 
     const product = try createProduct(allocator, conn, "Mouse", "Peripherals");
