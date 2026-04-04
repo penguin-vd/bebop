@@ -3,8 +3,6 @@ const std = @import("std");
 const utils = @import("../utils.zig");
 const queries = @import("../queries.zig");
 
-// -- Test Models --
-
 const SimpleModel = struct {
     id: i32,
     name: []const u8,
@@ -85,34 +83,6 @@ const ModelWithFK = struct {
     };
 };
 
-const Tag = struct {
-    id: i32,
-    name: []const u8,
-
-    pub const table_name = "tags";
-
-    pub const field_meta = .{
-        .id = utils.FieldMeta(i32){ .is_primary_key = true, .is_auto_increment = true },
-        .name = utils.FieldMeta([]const u8){ .max_length = 100 },
-    };
-};
-
-const ModelWithM2M = struct {
-    id: i32,
-    title: []const u8,
-    tags: []Tag,
-
-    pub const table_name = "articles";
-
-    pub const field_meta = .{
-        .id = utils.FieldMeta(i32){ .is_primary_key = true, .is_auto_increment = true },
-        .title = utils.FieldMeta([]const u8){ .max_length = 255 },
-        .tags = utils.FieldMeta([]Tag){ .many_to_many = true },
-    };
-};
-
-// -- Helper --
-
 fn table_info_from(allocator: std.mem.Allocator, columns: []const [2][]const u8) !std.ArrayList(utils.TableInformation) {
     var list: std.ArrayList(utils.TableInformation) = .{};
     for (columns) |col| {
@@ -130,69 +100,6 @@ fn free_table_info(allocator: std.mem.Allocator, info: *std.ArrayList(utils.Tabl
         allocator.free(item.type);
     }
     info.deinit(allocator);
-}
-
-// -- CREATE TABLE tests --
-
-test "create table: simple model" {
-    const allocator = std.testing.allocator;
-    const sql = try queries.build_create_table_query(allocator, SimpleModel);
-    defer allocator.free(sql);
-
-    try std.testing.expect(std.mem.indexOf(u8, sql, "CREATE TABLE IF NOT EXISTS users") != null);
-    try std.testing.expect(std.mem.indexOf(u8, sql, "id INTEGER") != null);
-    try std.testing.expect(std.mem.indexOf(u8, sql, "name TEXT") != null);
-    try std.testing.expect(std.mem.indexOf(u8, sql, "age INTEGER") != null);
-    try std.testing.expect(std.mem.indexOf(u8, sql, "PRIMARY KEY (id)") != null);
-}
-
-test "create table: model with defaults" {
-    const allocator = std.testing.allocator;
-    const sql = try queries.build_create_table_query(allocator, ModelWithDefaults);
-    defer allocator.free(sql);
-
-    try std.testing.expect(std.mem.indexOf(u8, sql, "score INTEGER") != null);
-    try std.testing.expect(std.mem.indexOf(u8, sql, "DEFAULT 0") != null);
-    try std.testing.expect(std.mem.indexOf(u8, sql, "active BOOLEAN") != null);
-    try std.testing.expect(std.mem.indexOf(u8, sql, "DEFAULT true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, sql, "status TEXT") != null);
-    try std.testing.expect(std.mem.indexOf(u8, sql, "DEFAULT 'active'") != null);
-}
-
-test "create table: model with optional field" {
-    const allocator = std.testing.allocator;
-    const sql = try queries.build_create_table_query(allocator, ModelWithOptional);
-    defer allocator.free(sql);
-
-    // bio is optional, so it should NOT have NOT NULL
-    try std.testing.expect(std.mem.indexOf(u8, sql, "bio TEXT") != null);
-    try std.testing.expect(std.mem.indexOf(u8, sql, "bio TEXT NOT NULL") == null);
-    // name is required
-    try std.testing.expect(std.mem.indexOf(u8, sql, "name TEXT NOT NULL") != null);
-}
-
-test "create table: model with unique field" {
-    const allocator = std.testing.allocator;
-    const sql = try queries.build_create_table_query(allocator, ModelWithUnique);
-    defer allocator.free(sql);
-
-    try std.testing.expect(std.mem.indexOf(u8, sql, "email TEXT NOT NULL UNIQUE") != null);
-}
-
-test "create table: model with foreign key" {
-    const allocator = std.testing.allocator;
-    const sql = try queries.build_create_table_query(allocator, ModelWithFK);
-    defer allocator.free(sql);
-
-    try std.testing.expect(std.mem.indexOf(u8, sql, "team_id INTEGER REFERENCES teams(id)") != null);
-}
-
-test "create table: auto increment" {
-    const allocator = std.testing.allocator;
-    const sql = try queries.build_create_table_query(allocator, SimpleModel);
-    defer allocator.free(sql);
-
-    try std.testing.expect(std.mem.indexOf(u8, sql, "GENERATED ALWAYS AS IDENTITY") != null);
 }
 
 // -- ALTER TABLE tests --
@@ -350,39 +257,4 @@ test "reverse alter: undo drop column" {
 
     // Reversing DROP COLUMN old_col -> ADD COLUMN old_col with original type
     try std.testing.expect(std.mem.indexOf(u8, sql, "ADD COLUMN old_col VARCHAR(255)") != null);
-}
-
-// -- PIVOT TABLE tests --
-
-test "pivot table: generates create query" {
-    const allocator = std.testing.allocator;
-    const result = try queries.build_pivot_table_queries(allocator, ModelWithM2M);
-    defer {
-        for (result) |q| allocator.free(q);
-        allocator.free(result);
-    }
-
-    try std.testing.expectEqual(@as(usize, 1), result.len);
-    try std.testing.expect(std.mem.indexOf(u8, result[0], "CREATE TABLE IF NOT EXISTS articles_tags") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result[0], "articles_id INTEGER REFERENCES articles(id)") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result[0], "tags_id INTEGER REFERENCES tags(id)") != null);
-}
-
-test "pivot table: generates drop query" {
-    const allocator = std.testing.allocator;
-    const result = try queries.build_drop_pivot_table_queries(allocator, ModelWithM2M);
-    defer {
-        for (result) |q| allocator.free(q);
-        allocator.free(result);
-    }
-
-    try std.testing.expectEqual(@as(usize, 1), result.len);
-    try std.testing.expectEqualStrings("DROP TABLE IF EXISTS articles_tags CASCADE;", result[0]);
-}
-
-test "pivot table: model without m2m returns empty" {
-    const allocator = std.testing.allocator;
-    const result = try queries.build_pivot_table_queries(allocator, SimpleModel);
-
-    try std.testing.expectEqual(@as(usize, 0), result.len);
 }

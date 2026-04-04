@@ -15,3 +15,7 @@ pub const field_meta = .{
     .order = orm.FieldMeta(Order){},
     .product = orm.FieldMeta(Product){},
 };
+
+pub const indexes = &[_]orm.Index{
+    .{ .fields = &.{ "order_id", "product_id" } },
+};

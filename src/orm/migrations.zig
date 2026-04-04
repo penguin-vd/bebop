@@ -68,20 +68,20 @@ pub fn make_migration(allocator: std.mem.Allocator, db: *pg.Pool, comptime Model
         try queries.build_alter_table_query(allocator, Model, table_info);
     defer allocator.free(up_sql);
 
+    var current_seq = seq;
+
     if (up_sql.len == 0) {
         std.debug.print("No changes needed for table: {s}\n", .{table_name});
-        return seq;
+    } else {
+        const down_sql = if (is_new_table)
+            try queries.build_drop_table_query(allocator, Model)
+        else
+            try queries.build_reverse_alter_table_query(allocator, Model, table_info);
+        defer allocator.free(down_sql);
+
+        try write_migration_file(allocator, table_name, "", current_seq, up_sql, down_sql);
+        current_seq += 1;
     }
-
-    const down_sql = if (is_new_table)
-        try queries.build_drop_table_query(allocator, Model)
-    else
-        try queries.build_reverse_alter_table_query(allocator, Model, table_info);
-    defer allocator.free(down_sql);
-
-    var current_seq = seq;
-    try write_migration_file(allocator, table_name, "", current_seq, up_sql, down_sql);
-    current_seq += 1;
 
     // Generate pivot table migrations for M2M relations
     const pivot_up = try queries.build_pivot_table_queries(allocator, Model);
@@ -96,9 +96,37 @@ pub fn make_migration(allocator: std.mem.Allocator, db: *pg.Pool, comptime Model
         allocator.free(pivot_down);
     }
 
-    for (pivot_up, pivot_down) |up, down| {
+    const pivot_names = queries.get_pivot_table_names(Model);
+    for (pivot_up, pivot_down, pivot_names) |up, down, name| {
         if (up.len == 0) continue;
+        if (try utils.table_exists(conn, name)) continue;
         try write_migration_file(allocator, table_name, "_pivot", current_seq, up, down);
+        current_seq += 1;
+    }
+
+    // Generate index migrations
+    const index_up = try queries.build_create_index_queries(allocator, Model);
+    defer {
+        for (index_up) |q| allocator.free(q);
+        allocator.free(index_up);
+    }
+
+    const index_down = try queries.build_drop_index_queries(allocator, Model);
+    defer {
+        for (index_down) |q| allocator.free(q);
+        allocator.free(index_down);
+    }
+
+    const index_names = try queries.get_index_names(allocator, Model);
+    defer {
+        for (index_names) |n| allocator.free(n);
+        allocator.free(index_names);
+    }
+
+    for (index_up, index_down, index_names) |up, down, name| {
+        if (up.len == 0) continue;
+        if (try utils.index_exists(conn, name)) continue;
+        try write_migration_file(allocator, table_name, "_index", current_seq, up, down);
         current_seq += 1;
     }
 

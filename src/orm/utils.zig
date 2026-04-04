@@ -14,6 +14,36 @@ pub fn get_table_name(allocator: std.mem.Allocator, comptime Model: type) ![]con
     return result;
 }
 
+pub const IndexMethod = enum {
+    btree,
+    hash,
+    gin,
+    gist,
+    spgist,
+    brin,
+
+    pub fn to_sql(self: IndexMethod) []const u8 {
+        return switch (self) {
+            .btree => "btree",
+            .hash => "hash",
+            .gin => "gin",
+            .gist => "gist",
+            .spgist => "spgist",
+            .brin => "brin",
+        };
+    }
+};
+
+pub const Index = struct {
+    fields: []const []const u8,
+    unique: bool = false,
+    name: ?[]const u8 = null,
+    method: IndexMethod = .btree,
+    where_clause: ?[]const u8 = null,
+    include: []const []const u8 = &.{},
+    concurrently: bool = false,
+};
+
 pub fn FieldMeta(comptime T: type) type {
     _ = T;
     return struct {
@@ -281,6 +311,28 @@ pub fn QueryFilter(comptime Model: type) type {
         .decls = &.{},
         .is_tuple = false,
     } });
+}
+
+pub fn table_exists(conn: anytype, table_name: []const u8) !bool {
+    var result = try conn.query("SELECT count(*) FROM information_schema.tables WHERE table_name = $1", .{table_name});
+    defer result.deinit();
+    if (try result.next()) |row| {
+        const count = row.get(i64, 0);
+        while (try result.next() != null) {}
+        return count > 0;
+    }
+    return false;
+}
+
+pub fn index_exists(conn: anytype, index_name: []const u8) !bool {
+    var result = try conn.query("SELECT count(*) FROM pg_indexes WHERE indexname = $1", .{index_name});
+    defer result.deinit();
+    if (try result.next()) |row| {
+        const count = row.get(i64, 0);
+        while (try result.next() != null) {}
+        return count > 0;
+    }
+    return false;
 }
 
 pub const TableInformation = struct {

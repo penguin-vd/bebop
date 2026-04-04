@@ -186,6 +186,37 @@ pub fn build_pivot_table_queries(
     return results;
 }
 
+pub fn get_pivot_table_names(comptime Model: type) []const []const u8 {
+    const owner_table = Model.table_name;
+    const struct_info = @typeInfo(Model).@"struct";
+
+    comptime var m2m_count: usize = 0;
+    inline for (struct_info.fields) |field| {
+        if (comptime utils.is_many_relation(field.type) and utils.is_many_to_many(Model, field.name)) {
+            m2m_count += 1;
+        }
+    }
+
+    if (m2m_count == 0) return &.{};
+
+    const names = comptime blk: {
+        var result: [m2m_count][]const u8 = undefined;
+        var idx: usize = 0;
+
+        for (struct_info.fields) |field| {
+            if (utils.is_many_relation(field.type) and utils.is_many_to_many(Model, field.name)) {
+                const ChildType = @typeInfo(field.type).pointer.child;
+                result[idx] = utils.get_pivot_table_name(owner_table, ChildType.table_name);
+                idx += 1;
+            }
+        }
+
+        break :blk result;
+    };
+
+    return &names;
+}
+
 pub fn build_alter_table_query(
     allocator: std.mem.Allocator,
     comptime Model: type,
@@ -423,6 +454,143 @@ pub fn build_reverse_alter_table_query(
     }
 
     return sql.toOwnedSlice(allocator);
+}
+
+pub fn build_create_index_queries(
+    allocator: std.mem.Allocator,
+    comptime Model: type,
+) ![]const []const u8 {
+    if (!@hasDecl(Model, "indexes")) return &.{};
+
+    const table_name = Model.table_name;
+    const indexes = Model.indexes;
+
+    if (indexes.len == 0) return &.{};
+
+    var results = try allocator.alloc([]const u8, indexes.len);
+
+    for (indexes, 0..) |idx, i| {
+        var sql: std.ArrayList(u8) = .{};
+        defer sql.deinit(allocator);
+
+        if (idx.unique) {
+            try sql.print(allocator, "CREATE UNIQUE INDEX ", .{});
+        } else {
+            try sql.print(allocator, "CREATE INDEX ", .{});
+        }
+
+        if (idx.concurrently) {
+            try sql.print(allocator, "CONCURRENTLY ", .{});
+        }
+
+        try sql.print(allocator, "IF NOT EXISTS ", .{});
+
+        // Index name
+        if (idx.name) |name| {
+            try sql.print(allocator, "{s}", .{name});
+        } else {
+            try sql.print(allocator, "idx_{s}", .{table_name});
+            for (idx.fields) |field| {
+                try sql.print(allocator, "_{s}", .{field});
+            }
+        }
+
+        try sql.print(allocator, " ON {s}", .{table_name});
+
+        if (idx.method != .btree) {
+            try sql.print(allocator, " USING {s}", .{idx.method.to_sql()});
+        }
+
+        try sql.print(allocator, " (", .{});
+        for (idx.fields, 0..) |field, j| {
+            if (j > 0) try sql.print(allocator, ", ", .{});
+            try sql.print(allocator, "{s}", .{field});
+        }
+        try sql.print(allocator, ")", .{});
+
+        if (idx.include.len > 0) {
+            try sql.print(allocator, " INCLUDE (", .{});
+            for (idx.include, 0..) |col, j| {
+                if (j > 0) try sql.print(allocator, ", ", .{});
+                try sql.print(allocator, "{s}", .{col});
+            }
+            try sql.print(allocator, ")", .{});
+        }
+
+        if (idx.where_clause) |where| {
+            try sql.print(allocator, " WHERE {s}", .{where});
+        }
+
+        try sql.print(allocator, ";", .{});
+
+        results[i] = try sql.toOwnedSlice(allocator);
+    }
+
+    return results;
+}
+
+pub fn build_drop_index_queries(
+    allocator: std.mem.Allocator,
+    comptime Model: type,
+) ![]const []const u8 {
+    if (!@hasDecl(Model, "indexes")) return &.{};
+
+    const table_name = Model.table_name;
+    const indexes = Model.indexes;
+
+    if (indexes.len == 0) return &.{};
+
+    var results = try allocator.alloc([]const u8, indexes.len);
+
+    for (indexes, 0..) |idx, i| {
+        var sql: std.ArrayList(u8) = .{};
+        defer sql.deinit(allocator);
+
+        try sql.print(allocator, "DROP INDEX IF EXISTS ", .{});
+
+        if (idx.name) |name| {
+            try sql.print(allocator, "{s}", .{name});
+        } else {
+            try sql.print(allocator, "idx_{s}", .{table_name});
+            for (idx.fields) |field| {
+                try sql.print(allocator, "_{s}", .{field});
+            }
+        }
+
+        try sql.print(allocator, ";", .{});
+
+        results[i] = try sql.toOwnedSlice(allocator);
+    }
+
+    return results;
+}
+
+pub fn get_index_names(allocator: std.mem.Allocator, comptime Model: type) ![]const []const u8 {
+    if (!@hasDecl(Model, "indexes")) return &.{};
+
+    const table_name = Model.table_name;
+    const indexes = Model.indexes;
+
+    if (indexes.len == 0) return &.{};
+
+    var results = try allocator.alloc([]const u8, indexes.len);
+
+    for (indexes, 0..) |idx, i| {
+        if (idx.name) |name| {
+            results[i] = try allocator.dupe(u8, name);
+        } else {
+            var name_buf: std.ArrayList(u8) = .{};
+            defer name_buf.deinit(allocator);
+
+            try name_buf.print(allocator, "idx_{s}", .{table_name});
+            for (idx.fields) |field| {
+                try name_buf.print(allocator, "_{s}", .{field});
+            }
+            results[i] = try name_buf.toOwnedSlice(allocator);
+        }
+    }
+
+    return results;
 }
 
 pub fn build_drop_pivot_table_queries(

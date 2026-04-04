@@ -14,3 +14,8 @@ pub const field_meta = .{
     .order_lines = orm.FieldMeta([]OrderLine){},
     .customer = orm.FieldMeta([]const u8){ .max_length = 255, .default_value = "Unknown" },
 };
+
+pub const indexes = &[_]orm.Index{
+    .{ .fields = &.{"reference"} },
+    .{ .fields = &.{"customer"} },
+};

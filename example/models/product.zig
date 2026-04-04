@@ -12,3 +12,7 @@ pub const field_meta = .{
     .name = orm.FieldMeta([]const u8){ .max_length = 255 },
     .categories = orm.FieldMeta([]Category){ .many_to_many = true },
 };
+
+pub const indexes = &[_]orm.Index{
+    .{ .fields = &.{"name"} },
+};
