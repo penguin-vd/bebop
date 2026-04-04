@@ -8,6 +8,13 @@ var shared_pool: ?*pg.Pool = null;
 fn initOnce() void {
     const allocator = std.heap.page_allocator;
     const pool_instance = db.get_testing_pool(allocator) catch @panic("failed to create testing pool");
+
+    // Reset the test database schema so migrations always replay cleanly
+    var conn = pool_instance.acquire() catch @panic("failed to acquire connection");
+    defer conn.release();
+    _ = conn.exec("DROP SCHEMA public CASCADE", .{}) catch @panic("failed to drop schema");
+    _ = conn.exec("CREATE SCHEMA public", .{}) catch @panic("failed to create schema");
+
     orm.migrate(allocator, pool_instance) catch @panic("failed to run migrations");
     shared_pool = pool_instance;
 }
@@ -33,7 +40,7 @@ fn truncate(p: *pg.Pool, allocator: std.mem.Allocator) !void {
     const query =
         \\SELECT tablename FROM pg_tables
         \\WHERE schemaname = 'public'
-        \\AND tablename != '_migrations'
+        \\AND tablename != 'schema_migrations'
     ;
 
     var result = try conn.query(query, .{});

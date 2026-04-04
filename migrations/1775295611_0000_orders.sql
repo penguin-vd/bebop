@@ -1,0 +1,5 @@
+-- UP
+ALTER TABLE orders ADD COLUMN customer TEXT DEFAULT 'Unknown';
+
+-- DOWN
+ALTER TABLE orders DROP COLUMN IF EXISTS customer;

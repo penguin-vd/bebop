@@ -3,6 +3,7 @@ const std = @import("std");
 pub const migrations = struct {
     pub const Apply = @import("migrations/apply.zig");
     pub const Create = @import("migrations/create.zig").MigrationsCreate;
+    pub const Rollback = @import("migrations/rollback.zig");
 };
 
 pub const debug = struct {

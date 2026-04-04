@@ -357,6 +357,10 @@ pub fn get_default_value(comptime T: type) []const u8 {
     };
 }
 
+pub fn needs_sql_quoting(sql_type: []const u8) bool {
+    return std.mem.eql(u8, sql_type, "TEXT") or std.mem.eql(u8, sql_type, "BLOB");
+}
+
 pub fn is_primary_key(comptime Model: type, comptime field_name: []const u8) bool {
     if (@hasDecl(Model, "field_meta")) {
         const meta = @field(Model.field_meta, field_name);

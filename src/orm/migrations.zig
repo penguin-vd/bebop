@@ -3,6 +3,9 @@ const pg = @import("pg");
 const utils = @import("utils.zig");
 const queries = @import("queries.zig");
 
+const up_marker = "-- UP\n";
+const down_marker = "-- DOWN\n";
+
 pub fn make_migrations(allocator: std.mem.Allocator, db: *pg.Pool, comptime models: []const type) !void {
     if (models.len == 0) {
         std.debug.print("No models provided.\n", .{});
@@ -13,12 +16,33 @@ pub fn make_migrations(allocator: std.mem.Allocator, db: *pg.Pool, comptime mode
         if (err != error.PathAlreadyExists) return err;
     };
 
+    var seq: usize = 0;
     inline for (models) |Model| {
-        try make_migration(allocator, db, Model);
+        seq = try make_migration(allocator, db, Model, seq);
     }
 }
 
-pub fn make_migration(allocator: std.mem.Allocator, db: *pg.Pool, comptime Model: type) !void {
+fn write_migration_file(allocator: std.mem.Allocator, table_name: []const u8, suffix: []const u8, seq: usize, up_sql: []const u8, down_sql: []const u8) !void {
+    const timestamp = std.time.timestamp();
+    const migration_name = try std.fmt.allocPrint(allocator, "{d}_{d:0>4}_{s}{s}.sql", .{ timestamp, seq, table_name, suffix });
+    defer allocator.free(migration_name);
+
+    const file_path = try std.fs.path.join(allocator, &[_][]const u8{ "migrations", migration_name });
+    defer allocator.free(file_path);
+
+    const file = try std.fs.cwd().createFile(file_path, .{});
+    defer file.close();
+
+    try file.writeAll(up_marker);
+    try file.writeAll(up_sql);
+    try file.writeAll("\n");
+    try file.writeAll(down_marker);
+    try file.writeAll(down_sql);
+
+    std.debug.print("Created migration: {s}\n", .{migration_name});
+}
+
+pub fn make_migration(allocator: std.mem.Allocator, db: *pg.Pool, comptime Model: type, seq: usize) !usize {
     var conn = try db.acquire();
     defer conn.release();
 
@@ -36,117 +60,156 @@ pub fn make_migration(allocator: std.mem.Allocator, db: *pg.Pool, comptime Model
         table_info.deinit(allocator);
     }
 
-    const sql = if (table_info.items.len == 0)
+    const is_new_table = table_info.items.len == 0;
+
+    const up_sql = if (is_new_table)
         try queries.build_create_table_query(allocator, Model)
     else
         try queries.build_alter_table_query(allocator, Model, table_info);
-    defer allocator.free(sql);
+    defer allocator.free(up_sql);
 
-    if (sql.len == 0) {
+    if (up_sql.len == 0) {
         std.debug.print("No changes needed for table: {s}\n", .{table_name});
-        return;
+        return seq;
     }
 
-    const timestamp = std.time.timestamp();
-    const migration_name = try std.fmt.allocPrint(
-        allocator,
-        "{d}_{s}.sql",
-        .{ timestamp, table_name },
-    );
-    defer allocator.free(migration_name);
+    const down_sql = if (is_new_table)
+        try queries.build_drop_table_query(allocator, Model)
+    else
+        try queries.build_reverse_alter_table_query(allocator, Model, table_info);
+    defer allocator.free(down_sql);
 
-    const file_path = try std.fs.path.join(
-        allocator,
-        &[_][]const u8{ "migrations", migration_name },
-    );
-    defer allocator.free(file_path);
-
-    const file = try std.fs.cwd().createFile(file_path, .{});
-    defer file.close();
-
-    try file.writeAll(sql);
-
-    std.debug.print("Created migration: {s}\n", .{migration_name});
+    var current_seq = seq;
+    try write_migration_file(allocator, table_name, "", current_seq, up_sql, down_sql);
+    current_seq += 1;
 
     // Generate pivot table migrations for M2M relations
-    const pivot_queries = try queries.build_pivot_table_queries(allocator, Model);
+    const pivot_up = try queries.build_pivot_table_queries(allocator, Model);
     defer {
-        for (pivot_queries) |pq| allocator.free(pq);
-        allocator.free(pivot_queries);
+        for (pivot_up) |pq| allocator.free(pq);
+        allocator.free(pivot_up);
     }
 
-    for (pivot_queries) |pivot_sql| {
-        if (pivot_sql.len == 0) continue;
-
-        const pivot_timestamp = std.time.timestamp();
-        const pivot_migration_name = try std.fmt.allocPrint(
-            allocator,
-            "{d}_{s}_pivot.sql",
-            .{ pivot_timestamp, table_name },
-        );
-        defer allocator.free(pivot_migration_name);
-
-        const pivot_file_path = try std.fs.path.join(
-            allocator,
-            &[_][]const u8{ "migrations", pivot_migration_name },
-        );
-        defer allocator.free(pivot_file_path);
-
-        const pivot_file = try std.fs.cwd().createFile(pivot_file_path, .{});
-        defer pivot_file.close();
-
-        try pivot_file.writeAll(pivot_sql);
-
-        std.debug.print("Created pivot migration: {s}\n", .{pivot_migration_name});
+    const pivot_down = try queries.build_drop_pivot_table_queries(allocator, Model);
+    defer {
+        for (pivot_down) |pq| allocator.free(pq);
+        allocator.free(pivot_down);
     }
+
+    for (pivot_up, pivot_down) |up, down| {
+        if (up.len == 0) continue;
+        try write_migration_file(allocator, table_name, "_pivot", current_seq, up, down);
+        current_seq += 1;
+    }
+
+    return current_seq;
+}
+
+fn parse_migration_section(contents: []const u8, marker: []const u8) ?[]const u8 {
+    const start = if (std.mem.indexOf(u8, contents, marker)) |pos| pos + marker.len else return null;
+    const end = if (std.mem.indexOfPos(u8, contents, start, "-- ")) |pos| pos else contents.len;
+
+    const section = std.mem.trim(u8, contents[start..end], &std.ascii.whitespace);
+    return if (section.len > 0) section else null;
 }
 
 pub fn migrate(allocator: std.mem.Allocator, db: *pg.Pool) !void {
     try queries.ensure_migrations_table(db);
 
-    var applied_migrations: std.ArrayList([]const u8) = .{};
-    defer {
-        for (applied_migrations.items) |m| allocator.free(m);
-        applied_migrations.deinit(allocator);
-    }
-
     var conn = try db.acquire();
     defer conn.release();
 
-    const result = try conn.query("SELECT migration_name FROM schema_migrations", .{});
-    defer result.deinit();
-
-    while (try result.next()) |row| {
-        const migration_name = try allocator.dupe(u8, row.get([]const u8, 0));
-        try applied_migrations.append(allocator, migration_name);
+    var applied = try get_applied_migrations(allocator, conn);
+    defer {
+        for (applied.items) |m| allocator.free(m);
+        applied.deinit(allocator);
     }
 
-    var migration_dir = try std.fs.cwd().openDir("migrations", .{ .iterate = true });
-    defer migration_dir.close();
-
-    var pending: std.ArrayList([]const u8) = .{};
+    var pending = try get_pending_migrations(allocator, applied);
     defer {
         for (pending.items) |name| allocator.free(name);
         pending.deinit(allocator);
     }
 
+    for (pending.items) |migration_name| {
+        std.debug.print("Applying migration: {s}\n", .{migration_name});
+
+        const sql = try read_migration_file(allocator, migration_name);
+        defer allocator.free(sql);
+
+        const up_sql = parse_migration_section(sql, up_marker) orelse sql;
+
+        _ = try conn.exec(up_sql, .{});
+        _ = try conn.exec("INSERT INTO schema_migrations (migration_name) VALUES ($1)", .{migration_name});
+    }
+
+    std.debug.print("Migrations applied successfully.\n", .{});
+}
+
+pub fn rollback(allocator: std.mem.Allocator, db: *pg.Pool) !void {
+    try queries.ensure_migrations_table(db);
+
+    var conn = try db.acquire();
+    defer conn.release();
+
+    var applied = try get_applied_migrations(allocator, conn);
+    defer {
+        for (applied.items) |m| allocator.free(m);
+        applied.deinit(allocator);
+    }
+
+    if (applied.items.len == 0) {
+        std.debug.print("No migrations to roll back.\n", .{});
+        return;
+    }
+
+    // Roll back the last applied migration
+    const last = applied.items[applied.items.len - 1];
+    std.debug.print("Rolling back migration: {s}\n", .{last});
+
+    const sql = try read_migration_file(allocator, last);
+    defer allocator.free(sql);
+
+    const down_sql = parse_migration_section(sql, down_marker) orelse {
+        std.debug.print("No DOWN section found in migration: {s}\n", .{last});
+        return;
+    };
+
+    _ = try conn.exec(down_sql, .{});
+    _ = try conn.exec("DELETE FROM schema_migrations WHERE migration_name = $1", .{last});
+
+    std.debug.print("Rolled back migration: {s}\n", .{last});
+}
+
+fn get_applied_migrations(allocator: std.mem.Allocator, conn: anytype) !std.ArrayList([]const u8) {
+    var applied: std.ArrayList([]const u8) = .{};
+
+    const result = try conn.query("SELECT migration_name FROM schema_migrations ORDER BY id ASC", .{});
+    defer result.deinit();
+
+    while (try result.next()) |row| {
+        try applied.append(allocator, try allocator.dupe(u8, row.get([]const u8, 0)));
+    }
+
+    return applied;
+}
+
+fn get_pending_migrations(allocator: std.mem.Allocator, applied: std.ArrayList([]const u8)) !std.ArrayList([]const u8) {
+    var pending: std.ArrayList([]const u8) = .{};
+
+    var migration_dir = try std.fs.cwd().openDir("migrations", .{ .iterate = true });
+    defer migration_dir.close();
+
     var it = migration_dir.iterate();
     while (try it.next()) |entry| {
-        if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".sql")) {
-            continue;
-        }
+        if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".sql")) continue;
 
-        var is_applied = false;
-        for (applied_migrations.items) |applied| {
-            if (std.mem.eql(u8, entry.name, applied)) {
-                is_applied = true;
-                break;
-            }
-        }
+        const is_applied = for (applied.items) |a| {
+            if (std.mem.eql(u8, entry.name, a)) break true;
+        } else false;
 
         if (!is_applied) {
-            const name = try allocator.dupe(u8, entry.name);
-            try pending.append(allocator, name);
+            try pending.append(allocator, try allocator.dupe(u8, entry.name));
         }
     }
 
@@ -156,23 +219,12 @@ pub fn migrate(allocator: std.mem.Allocator, db: *pg.Pool) !void {
         }
     }.lessThan);
 
-    for (pending.items) |migration_name| {
-        std.debug.print("Applying migration: {s}\n", .{migration_name});
+    return pending;
+}
 
-        const file_path = try std.fs.path.join(
-            allocator,
-            &[_][]const u8{ "migrations", migration_name },
-        );
-        defer allocator.free(file_path);
+fn read_migration_file(allocator: std.mem.Allocator, migration_name: []const u8) ![]const u8 {
+    const file_path = try std.fs.path.join(allocator, &[_][]const u8{ "migrations", migration_name });
+    defer allocator.free(file_path);
 
-        const sql = try std.fs.cwd().readFileAlloc(allocator, file_path, 1_000_000);
-        defer allocator.free(sql);
-
-        _ = try conn.exec(sql, .{});
-
-        const insert_sql = "INSERT INTO schema_migrations (migration_name) VALUES ($1)";
-        _ = try conn.exec(insert_sql, .{migration_name});
-    }
-
-    std.debug.print("Migrations applied successfully.\n", .{});
+    return std.fs.cwd().readFileAlloc(allocator, file_path, 1_000_000);
 }

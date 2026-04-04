@@ -10,6 +10,7 @@ test "tests:beforeEach" {
 }
 
 comptime {
+    _ = @import("tests/migrations.zig");
     _ = @import("tests/category.zig");
     _ = @import("tests/product.zig");
     _ = @import("tests/order.zig");

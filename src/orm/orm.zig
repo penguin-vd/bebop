@@ -5,3 +5,4 @@ pub const FieldMeta = @import("utils.zig").FieldMeta;
 const migrations = @import("migrations.zig");
 pub const make_migrations = migrations.make_migrations;
 pub const migrate = migrations.migrate;
+pub const rollback = migrations.rollback;

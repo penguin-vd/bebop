@@ -12,48 +12,6 @@ pub fn ensure_migrations_table(db: anytype) !void {
     _ = try conn.exec(sql, .{});
 }
 
-pub fn build_insert_query(allocator: std.mem.Allocator, comptime Model: type) ![]const u8 {
-    const table_name = if (@hasDecl(Model, "table_name"))
-        Model.table_name
-    else
-        unreachable;
-
-    var fields = std.ArrayList(u8){};
-    defer fields.deinit(allocator);
-
-    var placeholders = std.ArrayList(u8){};
-    defer placeholders.deinit(allocator);
-
-    const struct_info = @typeInfo(Model).@"struct";
-    var param_count: usize = 0;
-
-    inline for (struct_info.fields) |field| {
-        if (comptime utils.should_skip_field(Model, field.name)) continue;
-
-        const column_name = utils.get_column_name(Model, field.name);
-
-        if (param_count > 0) {
-            try fields.appendSlice(allocator, ", ");
-            try placeholders.appendSlice(allocator, ", ");
-        }
-
-        try fields.appendSlice(allocator, column_name);
-
-        param_count += 1;
-        const placeholder = try std.fmt.allocPrint(allocator, "${d}", .{param_count});
-        defer allocator.free(placeholder);
-        try placeholders.appendSlice(allocator, placeholder);
-    }
-
-    const returning_fields = try utils.get_field_list(allocator, Model);
-    defer allocator.free(returning_fields);
-
-    return std.fmt.allocPrint(
-        allocator,
-        "INSERT INTO {s} ({s}) VALUES ({s}) RETURNING {s};",
-        .{ table_name, fields.items, placeholders.items, returning_fields },
-    );
-}
 
 pub fn build_create_table_query(
     allocator: std.mem.Allocator,
@@ -141,7 +99,11 @@ pub fn build_create_table_query(
                     try sql.print(allocator, " UNIQUE", .{});
                 }
                 if (m.default_value) |default| {
-                    try sql.print(allocator, " DEFAULT {s}", .{default});
+                    if (utils.needs_sql_quoting(sql_type)) {
+                        try sql.print(allocator, " DEFAULT '{s}'", .{default});
+                    } else {
+                        try sql.print(allocator, " DEFAULT {s}", .{default});
+                    }
                 }
             }
 
@@ -309,8 +271,21 @@ pub fn build_alter_table_query(
                 }
 
                 if (!nullable) {
-                    const default_val = utils.get_default_value(field.type);
-                    try sql.print(allocator, " DEFAULT {s}", .{default_val});
+                    if (utils.get_field_meta(Model, field.name)) |m| {
+                        if (m.default_value) |default| {
+                            if (utils.needs_sql_quoting(sql_type)) {
+                                try sql.print(allocator, " DEFAULT '{s}'", .{default});
+                            } else {
+                                try sql.print(allocator, " DEFAULT {s}", .{default});
+                            }
+                        } else {
+                            const default_val = utils.get_default_value(field.type);
+                            try sql.print(allocator, " DEFAULT {s}", .{default_val});
+                        }
+                    } else {
+                        const default_val = utils.get_default_value(field.type);
+                        try sql.print(allocator, " DEFAULT {s}", .{default_val});
+                    }
                 }
 
                 if (utils.get_field_meta(Model, field.name)) |m| {
@@ -360,4 +335,128 @@ pub fn build_alter_table_query(
     }
 
     return sql.toOwnedSlice(allocator);
+}
+
+pub fn build_drop_table_query(allocator: std.mem.Allocator, comptime Model: type) ![]const u8 {
+    const table_name = if (@hasDecl(Model, "table_name"))
+        Model.table_name
+    else
+        unreachable;
+
+    return std.fmt.allocPrint(allocator, "DROP TABLE IF EXISTS {s} CASCADE;", .{table_name});
+}
+
+pub fn build_reverse_alter_table_query(
+    allocator: std.mem.Allocator,
+    comptime Model: type,
+    table_info: std.ArrayList(utils.TableInformation),
+) ![]const u8 {
+    const table_name = if (@hasDecl(Model, "table_name"))
+        Model.table_name
+    else
+        unreachable;
+
+    var sql: std.ArrayList(u8) = .{};
+    defer sql.deinit(allocator);
+
+    const type_info = @typeInfo(Model);
+    if (type_info != .@"struct") return error.ModelMustBeStruct;
+
+    const struct_info = type_info.@"struct";
+
+    var model_columns: std.ArrayList([]const u8) = .{};
+    defer {
+        for (model_columns.items) |item| allocator.free(item);
+        model_columns.deinit(allocator);
+    }
+
+    inline for (struct_info.fields) |field| {
+        var column_name_buf: [256]u8 = undefined;
+        var column_name: []const u8 = field.name;
+        const sql_type = utils.to_sql_type(field.type);
+
+        if (!std.mem.eql(u8, sql_type, "SKIP")) {
+            if (std.mem.eql(u8, sql_type, "BELONGS_TO")) {
+                column_name = try std.fmt.bufPrint(&column_name_buf, "{s}_id", .{field.name});
+            } else {
+                const meta = utils.get_field_meta(Model, field.name);
+                if (meta) |m| {
+                    if (m.column_name) |cn| column_name = cn;
+                }
+            }
+
+            try model_columns.append(allocator, try allocator.dupe(u8, column_name));
+
+            var column_exists = false;
+            for (table_info.items) |info| {
+                if (std.mem.eql(u8, info.column, column_name)) {
+                    column_exists = true;
+                    break;
+                }
+            }
+
+            if (!column_exists) {
+                try sql.print(allocator, "ALTER TABLE {s} DROP COLUMN IF EXISTS {s};\n", .{
+                    table_name,
+                    column_name,
+                });
+            }
+        }
+    }
+
+    for (table_info.items) |info| {
+        var should_readd = true;
+        for (model_columns.items) |model_col| {
+            if (std.mem.eql(u8, info.column, model_col)) {
+                should_readd = false;
+                break;
+            }
+        }
+
+        if (should_readd) {
+            try sql.print(allocator, "ALTER TABLE {s} ADD COLUMN {s} {s};\n", .{
+                table_name,
+                info.column,
+                info.type,
+            });
+        }
+    }
+
+    return sql.toOwnedSlice(allocator);
+}
+
+pub fn build_drop_pivot_table_queries(
+    allocator: std.mem.Allocator,
+    comptime Model: type,
+) ![]const []const u8 {
+    const owner_table = if (@hasDecl(Model, "table_name"))
+        Model.table_name
+    else
+        unreachable;
+
+    const struct_info = @typeInfo(Model).@"struct";
+    comptime var m2m_count: usize = 0;
+    inline for (struct_info.fields) |field| {
+        if (comptime utils.is_many_relation(field.type) and utils.is_many_to_many(Model, field.name)) {
+            m2m_count += 1;
+        }
+    }
+
+    if (m2m_count == 0) return &.{};
+
+    var results = try allocator.alloc([]const u8, m2m_count);
+    comptime var idx: usize = 0;
+
+    inline for (struct_info.fields) |field| {
+        if (comptime utils.is_many_relation(field.type) and utils.is_many_to_many(Model, field.name)) {
+            const ChildType = @typeInfo(field.type).pointer.child;
+            const related_table = ChildType.table_name;
+            const pivot_table = comptime utils.get_pivot_table_name(owner_table, related_table);
+
+            results[idx] = try std.fmt.allocPrint(allocator, "DROP TABLE IF EXISTS {s} CASCADE;", .{pivot_table});
+            idx += 1;
+        }
+    }
+
+    return results;
 }
