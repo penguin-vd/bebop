@@ -6,15 +6,20 @@ Bebop is a high-performance, type-safe web framework and Object-Relational Mappe
 
 ## Features
 
-*   **Modern ORM:** A powerful ORM with an expressive query builder.
-*   **Database Migrations:** A simple and effective migration system for PostgreSQL.
-*   **Declarative Routing:** A flexible routing system to map requests to controllers.
-*   **Comptime Powered:** Leverages Zig's `comptime` for reflection and code generation, eliminating runtime overhead.
-*   **CLI Tools:** Command-line interface for common tasks like database migrations.
+- **Modern ORM:** A powerful ORM with an expressive query builder.
+- **Database Migrations:** A simple and effective migration system for PostgreSQL.
+- **Declarative Routing:** A flexible routing system to map requests to controllers with route recording.
+- **Comptime Powered:** Leverages Zig's `comptime` for reflection and code generation, eliminating runtime overhead.
+- **CLI Tools:** Command-line interface for common tasks like database migrations.
+- **Testing Utilities:** Built-in helpers for testing controllers and database operations.
 
-## Getting Started
+## Requirements
 
-### Installation
+- Zig 0.15.1
+- PostgreSQL 16+
+- Docker and Docker Compose (optional, for development)
+
+## Installation
 
 Fetch the package:
 
@@ -31,10 +36,68 @@ const bebop_module = b.dependency("bebop", .{
 }).module("bebop");
 ```
 
-## Credits
+## Quick Start
 
-- [pg.zig](https://github.com/karlseguin/pg.zig) — PostgreSQL client by karlseguin
-- [http.zig](https://github.com/karlseguin/http.zig) — HTTP server by karlseguin
+### Using Docker
+
+1. Copy the environment file and adjust as needed:
+   ```sh
+   cp .env.example .env
+   ```
+
+2. Start the development environment:
+   ```sh
+   docker compose up --build
+   ```
+
+3. Create a migration:
+   ```sh
+   docker compose exec server zig build run -- migrations:create add_users_table
+   ```
+
+4. Apply migrations:
+   ```sh
+   docker compose exec server zig build run -- migrations:apply
+   ```
+
+### Running Locally
+
+1. Ensure PostgreSQL is running and accessible.
+
+2. Set environment variables:
+   ```sh
+   export POSTGRES_HOST=localhost
+   export POSTGRES_USER=postgres
+   export POSTGRES_PASSWORD=postgres
+   export POSTGRES_DATABASE=bebop
+   export POSTGRES_PORT=5432
+   export POSTGRES_SSLMODE=disable
+   ```
+
+3. Run the server:
+   ```sh
+   zig build run
+   ```
+
+## Project Structure
+
+```
+bebop/
+├── src/                    # Library source code
+│   ├── app.zig           # Application context
+│   ├── http.zig          # HTTP routing utilities
+│   ├── server.zig        # Server setup
+│   ├── testing.zig       # Testing utilities
+│   ├── orm/              # ORM components
+│   └── commands/         # CLI commands
+├── example/              # Example application
+│   ├── main.zig         # Entry point
+│   ├── routes.zig       # Route definitions
+│   ├── controllers/     # Request handlers
+│   └── models/          # Data models
+├── migrations/          # Database migrations
+└── docker-compose.yml   # Development environment
+```
 
 ## Usage
 
@@ -137,3 +200,64 @@ To apply all pending migrations to the database, run the following command:
 ```sh
 zig build run -- migrations:apply
 ```
+
+## Testing
+
+Run all tests:
+
+```sh
+zig build test
+```
+
+### Using Testing Utilities
+
+Bebop provides helpers for testing controllers:
+
+```zig
+const bebop = @import("bebop");
+
+test "products endpoint" {
+    const app = try bebop.testing.App.init(allocator, .{});
+    defer app.deinit();
+
+    try app.migrate();
+
+    const response = try app.get("/api/products");
+    defer response.deinit();
+
+    try std.testing.expectEqual(200, response.status);
+}
+```
+
+## Development
+
+### Debug Commands
+
+List available debug commands:
+
+```sh
+zig build run -- debug:help
+```
+
+### Route Inspection
+
+Bebop can record and print all registered routes during development:
+
+```zig
+pub fn register(router: *Router) !void {
+    var recording_router = Router.recording(allocator);
+    defer recording_router.deinit();
+
+    // Register routes...
+    recording_router.get("api/healthz", health_check);
+    recording_router.get("api/test", testing);
+
+    // Print all routes
+    recording_router.printRoutes();
+}
+```
+
+## Credits
+
+- [pg.zig](https://github.com/karlseguin/pg.zig) — PostgreSQL client by karlseguin
+- [http.zig](https://github.com/karlseguin/http.zig) — HTTP server by karlseguin
