@@ -3,6 +3,7 @@ const pg = @import("pg");
 
 const QueryBuilder = @import("query_builder.zig").QueryBuilder;
 const utils = @import("utils.zig");
+const crypto = @import("crypto.zig");
 
 pub fn EntityManager(comptime Model: type) type {
     return struct {
@@ -189,6 +190,8 @@ pub fn EntityManager(comptime Model: type) type {
 
             try self.resolveOneRelations(T, entity);
 
+            if (comptime @hasDecl(T, "pre_persist")) try entity.pre_persist();
+
             // Build INSERT SQL
             var sql = std.ArrayList(u8){};
             defer sql.deinit(self.allocator);
@@ -231,7 +234,13 @@ pub fn EntityManager(comptime Model: type) type {
             var stmt = try self.conn.prepare(sql.items);
             errdefer stmt.deinit();
 
-            bindEntityValues(T, entity, &stmt);
+            var scratch: std.ArrayList([]u8) = .{};
+            defer {
+                for (scratch.items) |s| self.allocator.free(s);
+                scratch.deinit(self.allocator);
+            }
+
+            try self.bindEntityValues(T, entity, &stmt, &scratch);
 
             var result = try stmt.execute();
             defer result.deinit();
@@ -245,6 +254,8 @@ pub fn EntityManager(comptime Model: type) type {
 
             try self.cascadeManyRelations(T, entity, id);
 
+            if (comptime @hasDecl(T, "post_persist")) try entity.post_persist();
+
             return id;
         }
 
@@ -255,6 +266,8 @@ pub fn EntityManager(comptime Model: type) type {
             const table_name = T.table_name;
 
             try self.resolveOneRelations(T, entity);
+
+            if (comptime @hasDecl(T, "pre_update")) try entity.pre_update();
 
             var sql = std.ArrayList(u8){};
             defer sql.deinit(self.allocator);
@@ -287,7 +300,13 @@ pub fn EntityManager(comptime Model: type) type {
             var stmt = try self.conn.prepare(sql.items);
             errdefer stmt.deinit();
 
-            bindEntityValues(T, entity, &stmt);
+            var scratch: std.ArrayList([]u8) = .{};
+            defer {
+                for (scratch.items) |s| self.allocator.free(s);
+                scratch.deinit(self.allocator);
+            }
+
+            try self.bindEntityValues(T, entity, &stmt, &scratch);
             try stmt.bind(@field(entity.*, pk_info.name));
 
             var result = try stmt.execute();
@@ -337,12 +356,16 @@ pub fn EntityManager(comptime Model: type) type {
                     }
                 }
             }
+
+            if (comptime @hasDecl(T, "post_update")) try entity.post_update();
         }
 
-        fn deleteEntity(self: *Self, entity: *const Model) !void {
+        fn deleteEntity(self: *Self, entity: *Model) !void {
             const table_name = Model.table_name;
             const delete_pk = comptime utils.get_primary_key_info(Model);
             const pk_column_name = comptime utils.get_column_name(Model, delete_pk.name);
+
+            if (comptime @hasDecl(Model, "pre_remove")) try entity.pre_remove();
 
             // Delete pivot table rows for M2M relations before deleting the entity
             const struct_info = @typeInfo(Model).@"struct";
@@ -376,6 +399,8 @@ pub fn EntityManager(comptime Model: type) type {
             defer result.deinit();
 
             while (try result.next()) |_| {}
+
+            if (comptime @hasDecl(Model, "post_remove")) try entity.post_remove();
         }
 
         fn bulkInsertEntitiesOfType(self: *Self, comptime T: type, entities: []T) anyerror!void {
@@ -448,8 +473,15 @@ pub fn EntityManager(comptime Model: type) type {
             var stmt = try self.conn.prepare(sql.items);
             errdefer stmt.deinit();
 
+            var scratch: std.ArrayList([]u8) = .{};
+            defer {
+                for (scratch.items) |s| self.allocator.free(s);
+                scratch.deinit(self.allocator);
+            }
+
             for (entities) |*entity| {
-                bindEntityValues(T, entity, &stmt);
+                if (comptime @hasDecl(T, "pre_persist")) try entity.pre_persist();
+                try self.bindEntityValues(T, entity, &stmt, &scratch);
             }
 
             var result = try stmt.execute();
@@ -465,6 +497,7 @@ pub fn EntityManager(comptime Model: type) type {
             for (entities) |*entity| {
                 const entity_id = @field(entity, child_pk.name);
                 try self.cascadeManyRelations(T, entity, entity_id);
+                if (comptime @hasDecl(T, "post_persist")) try entity.post_persist();
             }
         }
 
@@ -574,7 +607,13 @@ pub fn EntityManager(comptime Model: type) type {
             }
         }
 
-        fn bindEntityValues(comptime T: type, entity: anytype, stmt: *pg.Stmt) void {
+        fn bindEntityValues(
+            self: *Self,
+            comptime T: type,
+            entity: anytype,
+            stmt: *pg.Stmt,
+            scratch: *std.ArrayList([]u8),
+        ) !void {
             const struct_info = @typeInfo(T).@"struct";
             inline for (struct_info.fields) |field| {
                 const meta = comptime utils.get_field_meta(T, field.name);
@@ -583,10 +622,96 @@ pub fn EntityManager(comptime Model: type) type {
                 if (comptime utils.is_many_relation(field.type)) continue;
 
                 if (comptime utils.is_one_relation(field.type)) {
-                    stmt.bind(getRelationPk(field.type, @field(entity, field.name))) catch unreachable;
-                } else {
-                    stmt.bind(@field(entity, field.name)) catch unreachable;
+                    try stmt.bind(getRelationPk(field.type, @field(entity, field.name)));
+                    continue;
                 }
+
+                const is_enc = comptime utils.is_encrypted_field(T, field.name);
+                if (comptime is_enc) {
+                    comptime assertEncryptable(field.type, field.name);
+                    try bindEncrypted(self.allocator, field.type, @field(entity, field.name), stmt, scratch);
+                    continue;
+                }
+
+                if (comptime isCustomTypeField(field.type)) {
+                    try bindCustomType(self.allocator, field.type, @field(entity, field.name), stmt, scratch);
+                    continue;
+                }
+
+                try stmt.bind(@field(entity, field.name));
+            }
+        }
+
+        fn isCustomTypeField(comptime T: type) bool {
+            return switch (@typeInfo(T)) {
+                .@"struct" => utils.is_custom_type(T),
+                .optional => |opt| switch (@typeInfo(opt.child)) {
+                    .@"struct" => utils.is_custom_type(opt.child),
+                    else => false,
+                },
+                else => false,
+            };
+        }
+
+        fn assertEncryptable(comptime T: type, comptime field_name: []const u8) void {
+            const ok = switch (@typeInfo(T)) {
+                .pointer => |p| p.size == .slice and p.child == u8,
+                .optional => |opt| switch (@typeInfo(opt.child)) {
+                    .pointer => |p| p.size == .slice and p.child == u8,
+                    else => false,
+                },
+                else => false,
+            };
+            if (!ok) @compileError("Encrypted field '" ++ field_name ++ "' must be []const u8 or ?[]const u8");
+        }
+
+        fn bindEncrypted(
+            allocator: std.mem.Allocator,
+            comptime T: type,
+            value: T,
+            stmt: *pg.Stmt,
+            scratch: *std.ArrayList([]u8),
+        ) !void {
+            switch (@typeInfo(T)) {
+                .optional => {
+                    if (value) |v| {
+                        const enc = try crypto.encrypt(allocator, v);
+                        try scratch.append(allocator, enc);
+                        try stmt.bind(@as(?[]const u8, enc));
+                    } else {
+                        try stmt.bind(@as(?[]const u8, null));
+                    }
+                },
+                else => {
+                    const enc = try crypto.encrypt(allocator, value);
+                    try scratch.append(allocator, enc);
+                    try stmt.bind(@as([]const u8, enc));
+                },
+            }
+        }
+
+        fn bindCustomType(
+            allocator: std.mem.Allocator,
+            comptime T: type,
+            value: T,
+            stmt: *pg.Stmt,
+            scratch: *std.ArrayList([]u8),
+        ) !void {
+            switch (@typeInfo(T)) {
+                .optional => |opt| {
+                    if (value) |v| {
+                        const s = try opt.child.to_sql_param(v, allocator);
+                        try scratch.append(allocator, s);
+                        try stmt.bind(@as(?[]const u8, s));
+                    } else {
+                        try stmt.bind(@as(?[]const u8, null));
+                    }
+                },
+                else => {
+                    const s = try T.to_sql_param(value, allocator);
+                    try scratch.append(allocator, s);
+                    try stmt.bind(@as([]const u8, s));
+                },
             }
         }
 

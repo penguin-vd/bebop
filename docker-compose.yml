@@ -41,6 +41,7 @@ services:
       POSTGRES_PORT: ${POSTGRES_PORT}
       POSTGRES_SSLMODE: ${POSTGRES_SSLMODE}
       POSTGRES_DATABASE: ${POSTGRES_DATABASE}
+      APP_KEY: ${APP_KEY}
     depends_on:
       postgres:
         condition: service_healthy

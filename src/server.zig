@@ -39,6 +39,7 @@ pub fn Server(comptime Handler: type, comptime Action: type) type {
             try cmd.register(allocator, cmd.migrations.Apply);
             try cmd.register(allocator, cmd.migrations.Rollback);
             try cmd.register(allocator, cmd.debug.Router(Handler, Action, registerRoutes));
+            try cmd.register(allocator, cmd.key.Generate);
             if (registerCommands) |f| try f(allocator);
             try cmd.handle(allocator);
 

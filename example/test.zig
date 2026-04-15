@@ -17,4 +17,5 @@ comptime {
     _ = @import("tests/category_extended.zig");
     _ = @import("tests/product_extended.zig");
     _ = @import("tests/order_extended.zig");
+    _ = @import("tests/secret.zig");
 }

@@ -179,6 +179,149 @@ defer res.arena.free(products);
 try res.json(products, .{});
 ```
 
+## Built-in Types
+
+Bebop ships with three ORM-aware types for common use cases. Import them from `bebop.orm`.
+
+| Type | SQL type | Description |
+|------|----------|-------------|
+| `orm.Uuid` | `UUID` | RFC 4122 v4 UUID |
+| `orm.DateTime` | `TIMESTAMPTZ` | Microsecond-precision timestamp with timezone |
+| `orm.Date` | `DATE` | Calendar date (year, month, day) |
+
+```zig
+id: i32 = 0,
+external_id: orm.Uuid = .{ .bytes = [_]u8{0} ** 16 },
+created_at: orm.DateTime = .{ .micros = 0 },
+expires_on: orm.Date = .{ .days = 0 },
+
+pub const field_meta = .{
+    .id = orm.FieldMeta(i32){ .is_primary_key = true, .is_auto_increment = true },
+    .external_id = orm.FieldMeta(orm.Uuid){},
+    .created_at = orm.FieldMeta(orm.DateTime){},
+    .expires_on = orm.FieldMeta(orm.Date){},
+};
+```
+
+**Useful constructors:**
+
+```zig
+const id = orm.Uuid.new();                   // random UUID v4
+const now = orm.DateTime.now();              // current time
+const ts  = orm.DateTime.fromUnix(1_700_000_000); // from Unix seconds
+const d   = orm.Date.fromYmd(2030, 12, 31); // from year/month/day
+```
+
+## Encrypted Fields
+
+Fields can be transparently encrypted at rest using AES-256-GCM. The value is encrypted before being written to the database and decrypted when read back.
+
+Only `[]const u8` and `?[]const u8` fields can be encrypted.
+
+### 1. Generate an application key
+
+```sh
+zig build run -- key:generate
+# APP_KEY=base64:...
+```
+
+Add the output to your `.env` file (or export it as an environment variable). The key is loaded from `APP_KEY` at runtime.
+
+### 2. Mark the field as encrypted
+
+```zig
+token: []const u8,
+
+pub const field_meta = .{
+    .token = orm.FieldMeta([]const u8){ .is_encrypted = true, .max_length = 4096 },
+};
+```
+
+Everything else — binding, fetching, decrypting — is handled automatically by the `EntityManager`.
+
+## Lifecycle Hooks
+
+Entities can declare hook methods that the `EntityManager` calls automatically at specific points in the entity's lifecycle. All hooks are optional; declare only the ones you need.
+
+| Hook | Called |
+|------|--------|
+| `pre_persist` | Before `INSERT` |
+| `post_persist` | After `INSERT` |
+| `pre_update` | Before `UPDATE` |
+| `post_update` | After `UPDATE` |
+| `pre_remove` | Before `DELETE` |
+| `post_remove` | After `DELETE` |
+| `post_load` | After loading from the database |
+
+All hooks have the signature `pub fn hook_name(self: *Self) !void`.
+
+```zig
+const Self = @This();
+
+id: i32 = 0,
+external_id: orm.Uuid = .{ .bytes = [_]u8{0} ** 16 },
+created_at: orm.DateTime = .{ .micros = 0 },
+updated_at: orm.DateTime = .{ .micros = 0 },
+
+pub fn pre_persist(self: *Self) !void {
+    self.external_id = orm.Uuid.new();
+    self.created_at = orm.DateTime.now();
+    self.updated_at = orm.DateTime.now();
+}
+
+pub fn pre_update(self: *Self) !void {
+    self.updated_at = orm.DateTime.now();
+}
+```
+
+## Custom Types
+
+Any struct can be used as an ORM field type by implementing three declarations:
+
+| Declaration | Description |
+|-------------|-------------|
+| `pub const sql_type: []const u8` | PostgreSQL column type (e.g. `"TEXT"`) |
+| `pub fn to_sql_param(self: T, allocator: Allocator) ![]u8` | Serialize to a SQL string parameter |
+| `pub fn from_sql_param(allocator: Allocator, s: []const u8) !T` | Deserialize from the raw bytes returned by the driver |
+
+The ORM detects a custom type at `comptime` by checking for `sql_type` on the struct (and the absence of `table_name`, which would mark it as an entity).
+
+**Example — a `Money` type stored as `NUMERIC`:**
+
+```zig
+const std = @import("std");
+
+pub const Money = struct {
+    cents: i64,
+
+    pub const sql_type = "NUMERIC(12,2)";
+
+    pub fn to_sql_param(self: Money, allocator: std.mem.Allocator) ![]u8 {
+        const euros = @divTrunc(self.cents, 100);
+        const frac  = @abs(@rem(self.cents, 100));
+        return std.fmt.allocPrint(allocator, "{d}.{d:0>2}", .{ euros, frac });
+    }
+
+    pub fn from_sql_param(_: std.mem.Allocator, s: []const u8) !Money {
+        // parse "123.45" → 12345 cents
+        var it = std.mem.splitScalar(u8, s, '.');
+        const euros = try std.fmt.parseInt(i64, it.next() orelse return error.Invalid, 10);
+        const frac  = try std.fmt.parseInt(i64, it.next() orelse "0", 10);
+        return .{ .cents = euros * 100 + frac };
+    }
+};
+```
+
+Then use it in any entity just like any other field:
+
+```zig
+price: Money,
+
+pub const field_meta = .{
+    .price = orm.FieldMeta(Money){},
+};
+```
+
 ## Migrations
 
 Bebop provides CLI commands to manage your database schema migrations, making it easy to version your database alongside your code.

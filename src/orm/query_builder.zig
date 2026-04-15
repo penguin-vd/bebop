@@ -2,6 +2,7 @@ const std = @import("std");
 const utils = @import("utils.zig");
 const ft = @import("fields.zig");
 const pg = @import("pg");
+const crypto = @import("crypto.zig");
 
 pub fn QueryBuilder(comptime Model: type) type {
     return struct {
@@ -472,8 +473,51 @@ pub fn QueryBuilder(comptime Model: type) type {
                     }
                     break :blk null;
                 },
+                .@"struct" => blk: {
+                    if (comptime utils.is_custom_type(T)) {
+                        const str = row.get([]const u8, index);
+                        break :blk try T.from_sql_param(allocator, str);
+                    }
+                    @compileError("Unsupported field type: " ++ @typeName(T));
+                },
                 else => @compileError("Unsupported field type: " ++ @typeName(T)),
             };
+        }
+
+        fn getModelFieldValue(
+            allocator: std.mem.Allocator,
+            comptime OwnerModel: type,
+            comptime field_name: []const u8,
+            comptime T: type,
+            row: anytype,
+            index: usize,
+        ) !T {
+            if (comptime utils.is_encrypted_field(OwnerModel, field_name)) {
+                switch (@typeInfo(T)) {
+                    .pointer => |p| {
+                        if (p.size == .slice and p.child == u8) {
+                            const b64 = row.get([]const u8, index);
+                            return try crypto.decrypt(allocator, b64);
+                        }
+                    },
+                    .optional => |opt| {
+                        switch (@typeInfo(opt.child)) {
+                            .pointer => |p| {
+                                if (p.size == .slice and p.child == u8) {
+                                    if (row.get(?[]const u8, index)) |b64| {
+                                        return try crypto.decrypt(allocator, b64);
+                                    }
+                                    return null;
+                                }
+                            },
+                            else => {},
+                        }
+                    },
+                    else => {},
+                }
+                @compileError("Encrypted field '" ++ field_name ++ "' must be []const u8 or ?[]const u8");
+            }
+            return try getFieldValue(allocator, T, row, index);
         }
 
         fn getAllColumnNames(comptime T: type) []const []const u8 {
@@ -568,7 +612,7 @@ pub fn QueryBuilder(comptime Model: type) type {
                                 } else if (comptime utils.is_many_relation(field.type)) {
                                     @field(model, field.name) = try parseManyRelationField(self.allocator, field.type, Model, row, &col_index);
                                 } else {
-                                    @field(model, field.name) = try getFieldValue(self.allocator, field.type, row, col_index);
+                                    @field(model, field.name) = try getModelFieldValue(self.allocator, ResultType, field.name, field.type, row, col_index);
                                     col_index += 1;
                                 }
                                 break;
@@ -584,11 +628,13 @@ pub fn QueryBuilder(comptime Model: type) type {
                     } else if (comptime utils.is_many_relation(field.type)) {
                         @field(model, field.name) = try parseManyRelationField(self.allocator, field.type, Model, row, &col_index);
                     } else {
-                        @field(model, field.name) = try getFieldValue(self.allocator, field.type, row, col_index);
+                        @field(model, field.name) = try getModelFieldValue(self.allocator, ResultType, field.name, field.type, row, col_index);
                         col_index += 1;
                     }
                 }
             }
+
+            if (comptime @hasDecl(ResultType, "post_load")) try model.post_load();
 
             return model;
         }
@@ -608,10 +654,12 @@ pub fn QueryBuilder(comptime Model: type) type {
                 } else if (comptime utils.is_many_relation(field.type)) {
                     @field(relation_model, field.name) = try parseManyRelationField(allocator, field.type, Parent, row, col_index);
                 } else {
-                    @field(relation_model, field.name) = try getFieldValue(allocator, field.type, row, col_index.*);
+                    @field(relation_model, field.name) = try getModelFieldValue(allocator, RelationType, field.name, field.type, row, col_index.*);
                     col_index.* += 1;
                 }
             }
+
+            if (comptime @hasDecl(RelationType, "post_load")) try relation_model.post_load();
 
             return relation_model;
         }

@@ -7,4 +7,6 @@ comptime {
     _ = @import("orm/tests/queries_alter_table.zig");
     _ = @import("orm/tests/queries_pivot_table.zig");
     _ = @import("orm/tests/queries_indexes.zig");
+    _ = @import("orm/tests/types.zig");
+    _ = @import("orm/tests/crypto.zig");
 }

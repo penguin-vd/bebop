@@ -1,4 +1,5 @@
 const std = @import("std");
+const types = @import("types.zig");
 
 pub fn get_table_name(allocator: std.mem.Allocator, comptime Model: type) ![]const u8 {
     const input = @typeName(Model);
@@ -50,6 +51,7 @@ pub fn FieldMeta(comptime T: type) type {
         is_primary_key: bool = false,
         is_unique: bool = false,
         is_auto_increment: bool = false,
+        is_encrypted: bool = false,
         many_to_many: bool = false,
         max_length: ?usize = null,
         column_name: ?[]const u8 = null,
@@ -165,9 +167,23 @@ pub fn to_sql_type(comptime T: type) []const u8 {
             return "BLOB";
         },
         .optional => |opt_info| to_sql_type(opt_info.child),
-        .@"struct" => "BELONGS_TO",
+        .@"struct" => blk: {
+            if (@hasDecl(T, "sql_type") and !@hasDecl(T, "table_name")) {
+                break :blk T.sql_type;
+            }
+            break :blk "BELONGS_TO";
+        },
         else => "TEXT",
     };
+}
+
+pub fn is_encrypted_field(comptime Model: type, comptime field_name: []const u8) bool {
+    const meta = comptime get_field_meta(Model, field_name);
+    return if (meta) |m| m.is_encrypted else false;
+}
+
+pub fn is_custom_type(comptime T: type) bool {
+    return types.is_custom_type(T);
 }
 
 pub fn should_skip_field(comptime Model: type, comptime field_name: []const u8) bool {

@@ -2,6 +2,7 @@ const std = @import("std");
 
 const utils = @import("../utils.zig");
 const queries = @import("../queries.zig");
+const types = @import("../types.zig");
 
 const SimpleModel = struct {
     id: i32,
@@ -142,4 +143,51 @@ test "create table: auto increment" {
     defer allocator.free(sql);
 
     try std.testing.expect(std.mem.indexOf(u8, sql, "GENERATED ALWAYS AS IDENTITY") != null);
+}
+
+const ModelWithCustomTypes = struct {
+    id: i32,
+    external_id: types.Uuid,
+    created_at: types.DateTime,
+    birth_date: types.Date,
+
+    pub const table_name = "events";
+
+    pub const field_meta = .{
+        .id = utils.FieldMeta(i32){ .is_primary_key = true, .is_auto_increment = true },
+        .external_id = utils.FieldMeta(types.Uuid){},
+        .created_at = utils.FieldMeta(types.DateTime){},
+        .birth_date = utils.FieldMeta(types.Date){},
+    };
+};
+
+test "create table: UUID, TIMESTAMPTZ, DATE columns" {
+    const allocator = std.testing.allocator;
+    const sql = try queries.build_create_table_query(allocator, ModelWithCustomTypes);
+    defer allocator.free(sql);
+
+    try std.testing.expect(std.mem.indexOf(u8, sql, "external_id UUID") != null);
+    try std.testing.expect(std.mem.indexOf(u8, sql, "created_at TIMESTAMPTZ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, sql, "birth_date DATE") != null);
+}
+
+const ModelWithEncrypted = struct {
+    id: i32,
+    ssn: []const u8,
+
+    pub const table_name = "secrets";
+
+    pub const field_meta = .{
+        .id = utils.FieldMeta(i32){ .is_primary_key = true, .is_auto_increment = true },
+        .ssn = utils.FieldMeta([]const u8){ .is_encrypted = true, .max_length = 255 },
+    };
+};
+
+test "create table: encrypted field stores as TEXT" {
+    const allocator = std.testing.allocator;
+    const sql = try queries.build_create_table_query(allocator, ModelWithEncrypted);
+    defer allocator.free(sql);
+
+    // Encryption is transparent to DDL: field stays TEXT.
+    try std.testing.expect(std.mem.indexOf(u8, sql, "ssn TEXT NOT NULL") != null);
 }
