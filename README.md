@@ -231,14 +231,6 @@ test "products endpoint" {
 
 ## Development
 
-### Debug Commands
-
-List available debug commands:
-
-```sh
-zig build run -- debug:help
-```
-
 ### Route Inspection
 
 Bebop can record and print all registered routes during development:
