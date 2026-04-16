@@ -9,3 +9,4 @@ pub const Server = @import("server.zig").Server;
 pub const httpz = @import("httpz");
 pub const pg = @import("pg");
 pub const jwt = @import("lib/jwt.zig");
+pub const middleware = @import("lib/middleware.zig");
