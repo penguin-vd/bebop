@@ -27,7 +27,7 @@ pub fn Server(comptime Handler: type, comptime Action: type) type {
     return struct {
         pub fn start(
             config: Config,
-            comptime initFn: fn (*pg.Pool) App,
+            comptime initFn: fn (*pg.Pool, []const u8) App,
             comptime registerRoutes: fn (*http.Router(Handler, Action)) anyerror!void,
             comptime registerCommands: ?fn (std.mem.Allocator) anyerror!void,
         ) !void {
@@ -43,10 +43,18 @@ pub fn Server(comptime Handler: type, comptime Action: type) type {
             if (registerCommands) |f| try f(allocator);
             try cmd.handle(allocator);
 
+            const app_key = blk: {
+                var env_map = try std.process.getEnvMap(allocator);
+                defer env_map.deinit();
+                const key = env_map.get("APP_KEY") orelse return error.MissingAppKey;
+                break :blk try allocator.dupe(u8, key);
+            };
+            defer allocator.free(app_key);
+
             var pool = try db_module.get_pool(allocator);
             defer pool.deinit();
 
-            var app = initFn(pool);
+            var app = initFn(pool, app_key);
 
             var server = try httpz.Server(Handler).init(allocator, .{
                 .port = config.port,

@@ -8,3 +8,4 @@ pub const start = @import("server.zig").start;
 pub const Server = @import("server.zig").Server;
 pub const httpz = @import("httpz");
 pub const pg = @import("pg");
+pub const jwt = @import("lib/jwt.zig");

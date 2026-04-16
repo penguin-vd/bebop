@@ -12,9 +12,10 @@ pub const RequestContext = struct {
 pub const Action = *const fn (*RequestContext, *httpz.Request, *httpz.Response) anyerror!void;
 
 db: *pg.Pool,
+app_key: []const u8,
 
-pub fn init(db: *pg.Pool) App {
-    return .{ .db = db };
+pub fn init(db: *pg.Pool, app_key: []const u8) App {
+    return .{ .db = db, .app_key = app_key };
 }
 
 pub fn notFound(_: *App, req: *httpz.Request, res: *httpz.Response) !void {
