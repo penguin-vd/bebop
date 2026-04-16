@@ -141,6 +141,9 @@ pub fn QueryBuilder(comptime Model: type) type {
 
                         switch (@typeInfo(NextType)) {
                             .@"struct" => {
+                                if (comptime !@hasDecl(NextType, "table_name")) {
+                                    return error.InvalidRelationType;
+                                }
                                 const new_path_len = if (prefix_path) |p| p.len + 1 else 1;
                                 var new_path = try allocator.alloc([]const u8, new_path_len);
                                 errdefer allocator.free(new_path);
@@ -262,6 +265,15 @@ pub fn QueryBuilder(comptime Model: type) type {
                         else => @compileError("Unsupported pointer type for WHERE value"),
                     }
                 },
+                .@"struct" => {
+                    if (comptime utils.is_custom_type(T)) {
+                        const param = try value.to_sql_param(self.allocator);
+                        defer self.allocator.free(param);
+                        try value_str.appendSlice(self.allocator, param);
+                    } else {
+                        @compileError("Unsupported struct type for WHERE value: " ++ @typeName(T));
+                    }
+                },
                 .optional => |opt_info| {
                     if (value) |v| {
                         switch (@typeInfo(opt_info.child)) {
@@ -269,6 +281,15 @@ pub fn QueryBuilder(comptime Model: type) type {
                             .float => try value_str.print(self.allocator, "{d}", .{v}),
                             .bool => try value_str.print(self.allocator, "{}", .{v}),
                             .pointer => try value_str.appendSlice(self.allocator, v),
+                            .@"struct" => {
+                                if (comptime utils.is_custom_type(opt_info.child)) {
+                                    const param = try v.to_sql_param(self.allocator);
+                                    defer self.allocator.free(param);
+                                    try value_str.appendSlice(self.allocator, param);
+                                } else {
+                                    @compileError("Unsupported optional struct type for WHERE value: " ++ @typeName(opt_info.child));
+                                }
+                            },
                             else => @compileError("Unsupported optional type for WHERE value"),
                         }
                     } else {
