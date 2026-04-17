@@ -6,14 +6,17 @@ pub const Claims = struct {
     exp: i64,
 };
 
-pub fn generate(allocator: std.mem.Allocator, claims: Claims, secret: []const u8) ![]u8 {
+pub fn generate(comptime T: type, allocator: std.mem.Allocator, claims: T, secret: []const u8) ![]u8 {
     const header = "eyJhbGciOiJIUzI1NiJ9";
 
-    const payload_json = try std.fmt.allocPrint(allocator, 
-        "{{\"sub\":{d},\"exp\":{d}}}", .{ claims.sub, claims.exp });
-    defer allocator.free(payload_json);
+    const fmt = std.json.fmt(claims, .{});
 
-    const payload = try base64Encode(allocator, payload_json);
+    var writer = std.Io.Writer.Allocating.init(allocator);
+    try fmt.format(&writer.writer);
+    const json_string = try writer.toOwnedSlice();
+    defer allocator.free(json_string);
+
+    const payload = try base64Encode(allocator, json_string);
     defer allocator.free(payload);
 
     const signing_input = try std.fmt.allocPrint(allocator, "{s}.{s}", .{ header, payload });
@@ -28,7 +31,7 @@ pub fn generate(allocator: std.mem.Allocator, claims: Claims, secret: []const u8
     return std.fmt.allocPrint(allocator, "{s}.{s}.{s}", .{ header, payload, signature });
 }
 
-pub fn verify(allocator: std.mem.Allocator, token: []const u8, secret: []const u8) !Claims {
+pub fn verify(comptime T: type, allocator: std.mem.Allocator, token: []const u8, secret: []const u8) !T {
     var parts = std.mem.splitScalar(u8, token, '.');
     const header = parts.next() orelse return error.InvalidToken;
     const payload = parts.next() orelse return error.InvalidToken;
@@ -48,11 +51,13 @@ pub fn verify(allocator: std.mem.Allocator, token: []const u8, secret: []const u
     const payload_json = try base64Decode(allocator, payload);
     defer allocator.free(payload_json);
 
-    const parsed = try std.json.parseFromSlice(Claims, allocator, payload_json, .{});
+    const parsed = try std.json.parseFromSlice(T, allocator, payload_json, .{});
     defer parsed.deinit();
 
-    const now = std.time.timestamp();
-    if (parsed.value.exp < now) return error.TokenExpired;
+    if (@hasField(T, "exp")) {
+        const now = std.time.timestamp();
+        if (parsed.value.exp < now) return error.TokenExpired;
+    }
 
     return parsed.value;
 }

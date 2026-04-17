@@ -6,10 +6,10 @@ test "generate and verify round-trip" {
     const secret = "supersecret";
     const claims = jwt.Claims{ .sub = 42, .exp = std.time.timestamp() + 3600 };
 
-    const token = try jwt.generate(allocator, claims, secret);
+    const token = try jwt.generate(jwt.Claims, allocator, claims, secret);
     defer allocator.free(token);
 
-    const verified = try jwt.verify(allocator, token, secret);
+    const verified = try jwt.verify(jwt.Claims, allocator, token, secret);
     try std.testing.expectEqual(claims.sub, verified.sub);
     try std.testing.expectEqual(claims.exp, verified.exp);
 }
@@ -19,20 +19,20 @@ test "verify rejects expired token" {
     const secret = "supersecret";
     const claims = jwt.Claims{ .sub = 1, .exp = std.time.timestamp() - 1 };
 
-    const token = try jwt.generate(allocator, claims, secret);
+    const token = try jwt.generate(jwt.Claims, allocator, claims, secret);
     defer allocator.free(token);
 
-    try std.testing.expectError(error.TokenExpired, jwt.verify(allocator, token, secret));
+    try std.testing.expectError(error.TokenExpired, jwt.verify(jwt.Claims, allocator, token, secret));
 }
 
 test "verify rejects wrong secret" {
     const allocator = std.testing.allocator;
     const claims = jwt.Claims{ .sub = 1, .exp = std.time.timestamp() + 3600 };
 
-    const token = try jwt.generate(allocator, claims, "correct-secret");
+    const token = try jwt.generate(jwt.Claims, allocator, claims, "correct-secret");
     defer allocator.free(token);
 
-    try std.testing.expectError(error.InvalidSignature, jwt.verify(allocator, token, "wrong-secret"));
+    try std.testing.expectError(error.InvalidSignature, jwt.verify(jwt.Claims, allocator, token, "wrong-secret"));
 }
 
 test "verify rejects tampered payload" {
@@ -40,7 +40,7 @@ test "verify rejects tampered payload" {
     const secret = "supersecret";
     const claims = jwt.Claims{ .sub = 1, .exp = std.time.timestamp() + 3600 };
 
-    const token = try jwt.generate(allocator, claims, secret);
+    const token = try jwt.generate(jwt.Claims, allocator, claims, secret);
     defer allocator.free(token);
 
     var parts = std.mem.splitScalar(u8, token, '.');
@@ -57,11 +57,11 @@ test "verify rejects tampered payload" {
     const tampered = try std.fmt.allocPrint(allocator, "{s}.{s}.{s}", .{ header, fake_payload, signature });
     defer allocator.free(tampered);
 
-    try std.testing.expectError(error.InvalidSignature, jwt.verify(allocator, tampered, secret));
+    try std.testing.expectError(error.InvalidSignature, jwt.verify(jwt.Claims, allocator, tampered, secret));
 }
 
 test "verify rejects malformed token" {
     const allocator = std.testing.allocator;
-    try std.testing.expectError(error.InvalidToken, jwt.verify(allocator, "notavalidtoken", "secret"));
-    try std.testing.expectError(error.InvalidToken, jwt.verify(allocator, "only.twoparts", "secret"));
+    try std.testing.expectError(error.InvalidToken, jwt.verify(jwt.Claims, allocator, "notavalidtoken", "secret"));
+    try std.testing.expectError(error.InvalidToken, jwt.verify(jwt.Claims, allocator, "only.twoparts", "secret"));
 }
