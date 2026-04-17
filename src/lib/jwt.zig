@@ -51,7 +51,7 @@ pub fn verify(comptime T: type, allocator: std.mem.Allocator, token: []const u8,
     const payload_json = try base64Decode(allocator, payload);
     defer allocator.free(payload_json);
 
-    const parsed = try std.json.parseFromSlice(T, allocator, payload_json, .{});
+    const parsed = try std.json.parseFromSlice(T, allocator, payload_json, .{ .allocate = .alloc_always });
 
     if (@hasField(T, "exp")) {
         const now = std.time.timestamp();
