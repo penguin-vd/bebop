@@ -31,7 +31,7 @@ pub fn generate(comptime T: type, allocator: std.mem.Allocator, claims: T, secre
     return std.fmt.allocPrint(allocator, "{s}.{s}.{s}", .{ header, payload, signature });
 }
 
-pub fn verify(comptime T: type, allocator: std.mem.Allocator, token: []const u8, secret: []const u8) !T {
+pub fn verify(comptime T: type, allocator: std.mem.Allocator, token: []const u8, secret: []const u8) !std.json.Parsed(T) {
     var parts = std.mem.splitScalar(u8, token, '.');
     const header = parts.next() orelse return error.InvalidToken;
     const payload = parts.next() orelse return error.InvalidToken;
@@ -52,14 +52,16 @@ pub fn verify(comptime T: type, allocator: std.mem.Allocator, token: []const u8,
     defer allocator.free(payload_json);
 
     const parsed = try std.json.parseFromSlice(T, allocator, payload_json, .{});
-    defer parsed.deinit();
 
     if (@hasField(T, "exp")) {
         const now = std.time.timestamp();
-        if (parsed.value.exp < now) return error.TokenExpired;
+        if (parsed.value.exp < now) {
+            parsed.deinit();
+            return error.TokenExpired;
+        }
     }
 
-    return parsed.value;
+    return parsed;
 }
 
 fn base64Encode(allocator: std.mem.Allocator, data: []const u8) ![]const u8 {

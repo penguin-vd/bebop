@@ -10,8 +10,9 @@ test "generate and verify round-trip" {
     defer allocator.free(token);
 
     const verified = try jwt.verify(jwt.Claims, allocator, token, secret);
-    try std.testing.expectEqual(claims.sub, verified.sub);
-    try std.testing.expectEqual(claims.exp, verified.exp);
+    defer verified.deinit();
+    try std.testing.expectEqual(claims.sub, verified.value.sub);
+    try std.testing.expectEqual(claims.exp, verified.value.exp);
 }
 
 test "verify rejects expired token" {
