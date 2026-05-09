@@ -14,7 +14,7 @@ pub const key = struct {
     pub const Generate = @import("key/generate.zig");
 };
 
-var commands = std.ArrayList(struct { command: []const u8, run: *const fn (allocator: std.mem.Allocator) anyerror!void }){};
+var commands: std.ArrayList(struct { command: []const u8, run: *const fn (allocator: std.mem.Allocator, io: std.Io) anyerror!void }) = .empty;
 
 pub fn register(allocator: std.mem.Allocator, comptime Command: type) !void {
     if (!@hasDecl(Command, "command")) {
@@ -32,19 +32,21 @@ pub fn deinit(allocator: std.mem.Allocator) void {
     commands.deinit(allocator);
 }
 
-pub fn handle(allocator: std.mem.Allocator) !void {
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+pub fn handle(allocator: std.mem.Allocator, args: std.process.Args, io: std.Io) !void {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
 
-    if (args.len < 2) {
-        return; // This means no arguments were given, and we run the server
+    const argv = try args.toSlice(arena.allocator());
+
+    if (argv.len < 2) {
+        return; // no arguments given — run the server
     }
 
-    const command = args[1];
+    const command = argv[1];
 
     for (commands.items) |cmd| {
         if (std.mem.eql(u8, cmd.command, command)) {
-            try cmd.run(allocator);
+            try cmd.run(allocator, io);
             std.process.exit(0);
         }
     }

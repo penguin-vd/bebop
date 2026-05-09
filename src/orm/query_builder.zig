@@ -51,7 +51,7 @@ pub fn QueryBuilder(comptime Model: type) type {
         pub fn init(allocator: std.mem.Allocator) Self {
             return .{
                 .allocator = allocator,
-                .where_conditions = .{},
+                .where_conditions = .empty,
             };
         }
 
@@ -108,7 +108,7 @@ pub fn QueryBuilder(comptime Model: type) type {
                 return base_table;
             }
 
-            var alias = std.ArrayList(u8){};
+            var alias: std.ArrayList(u8) = .empty;
             defer alias.deinit(allocator);
 
             try alias.appendSlice(allocator, base_table);
@@ -223,7 +223,7 @@ pub fn QueryBuilder(comptime Model: type) type {
         pub fn where(self: *Self, field_name: []const u8, operator: []const u8, value: anytype) !void {
             const parsed = try parseFieldName(self.allocator, field_name);
 
-            var value_str = std.ArrayList(u8){};
+            var value_str: std.ArrayList(u8) = .empty;
             defer value_str.deinit(self.allocator);
 
             const T = @TypeOf(value);
@@ -377,10 +377,10 @@ pub fn QueryBuilder(comptime Model: type) type {
         }
 
         pub fn toSql(self: *Self) !struct { sql: []u8, params: []const []const u8 } {
-            var sql = std.ArrayList(u8){};
+            var sql: std.ArrayList(u8) = .empty;
             errdefer sql.deinit(self.allocator);
 
-            var params = std.ArrayList([]const u8){};
+            var params: std.ArrayList([]const u8) = .empty;
             errdefer params.deinit(self.allocator);
 
             try sql.print(self.allocator, "SELECT ", .{});
@@ -476,27 +476,27 @@ pub fn QueryBuilder(comptime Model: type) type {
         fn getFieldValue(allocator: std.mem.Allocator, comptime T: type, row: pg.Row, index: usize) !T {
             return switch (@typeInfo(T)) {
                 .int, .float, .bool => {
-                    if (row.get(?T, index)) |result| {
+                    if (try row.get(?T, index)) |result| {
                         return result;
                     }
                     return error.FoundNullValue;
                 },
                 .pointer => |ptr_info| blk: {
                     if (ptr_info.size == .slice and ptr_info.child == u8) {
-                        const str = row.get([]const u8, index);
+                        const str = try row.get([]const u8, index);
                         break :blk try allocator.dupe(u8, str);
                     }
                     @compileError("Unsupported pointer type: " ++ @typeName(T));
                 },
                 .optional => |opt_info| blk: {
-                    if (row.get(T, index)) |_| {
+                    if (try row.get(T, index)) |_| {
                         break :blk try getFieldValue(allocator, opt_info.child, row, index);
                     }
                     break :blk null;
                 },
                 .@"struct" => blk: {
                     if (comptime utils.is_custom_type(T)) {
-                        const str = row.get([]const u8, index);
+                        const str = try row.get([]const u8, index);
                         break :blk try T.from_sql_param(allocator, str);
                     }
                     @compileError("Unsupported field type: " ++ @typeName(T));
@@ -517,7 +517,7 @@ pub fn QueryBuilder(comptime Model: type) type {
                 switch (@typeInfo(T)) {
                     .pointer => |p| {
                         if (p.size == .slice and p.child == u8) {
-                            const b64 = row.get([]const u8, index);
+                            const b64 = try row.get([]const u8, index);
                             return try crypto.decrypt(allocator, b64);
                         }
                     },
@@ -525,7 +525,7 @@ pub fn QueryBuilder(comptime Model: type) type {
                         switch (@typeInfo(opt.child)) {
                             .pointer => |p| {
                                 if (p.size == .slice and p.child == u8) {
-                                    if (row.get(?[]const u8, index)) |b64| {
+                                    if (try row.get(?[]const u8, index)) |b64| {
                                         return try crypto.decrypt(allocator, b64);
                                     }
                                     return null;
@@ -608,7 +608,7 @@ pub fn QueryBuilder(comptime Model: type) type {
                 }
             }
 
-            var list = std.ArrayList(ResultType){};
+            var list: std.ArrayList(ResultType) = .empty;
             var iter = results.valueIterator();
             while (iter.next()) |item| {
                 try list.append(self.allocator, item.*);
@@ -687,7 +687,7 @@ pub fn QueryBuilder(comptime Model: type) type {
 
         fn parseManyRelationField(allocator: std.mem.Allocator, comptime RelationType: type, comptime Parent: ?type, row: anytype, col_index: *usize) !RelationType {
             const ChildType = @typeInfo(RelationType).pointer.child;
-            var array = std.ArrayList(ChildType){};
+            var array: std.ArrayList(ChildType) = .empty;
 
             const model = parseOneRelationField(allocator, ChildType, Parent, row, col_index) catch |err| switch (err) {
                 error.FoundNullValue => return try array.toOwnedSlice(allocator),
@@ -791,7 +791,7 @@ pub fn QueryBuilder(comptime Model: type) type {
                         }
                     }
 
-                    var list = std.ArrayList(ChildType){};
+                    var list: std.ArrayList(ChildType) = .empty;
                     var iter = map.valueIterator();
                     while (iter.next()) |item| {
                         try list.append(self.allocator, item.*);

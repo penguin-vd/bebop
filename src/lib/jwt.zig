@@ -54,7 +54,9 @@ pub fn verify(comptime T: type, allocator: std.mem.Allocator, token: []const u8,
     const parsed = try std.json.parseFromSlice(T, allocator, payload_json, .{ .allocate = .alloc_always });
 
     if (@hasField(T, "exp")) {
-        const now = std.time.timestamp();
+        var _ts: std.os.linux.timespec = undefined;
+        _ = std.os.linux.clock_gettime(.REALTIME, &_ts);
+        const now = _ts.sec;
         if (parsed.value.exp < now) {
             parsed.deinit();
             return error.TokenExpired;

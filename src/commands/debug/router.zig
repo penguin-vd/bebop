@@ -5,7 +5,8 @@ pub fn DebugRouter(comptime Handler: type, comptime Action: type, comptime regis
     return struct {
         pub const command = "debug:router";
 
-        pub fn run(allocator: std.mem.Allocator) !void {
+        pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
+            _ = io;
             var router = http.Router(Handler, Action).recording(allocator);
             defer router.deinit();
 

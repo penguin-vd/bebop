@@ -6,8 +6,8 @@ test "rollback and re-apply migrations" {
     const pool = bebop.testing.pool();
 
     // Rollback should succeed even when there's nothing to roll back
-    try bebop.orm.rollback(allocator, pool);
+    try bebop.orm.rollback(allocator, std.testing.io, pool);
 
     // Re-apply should bring us back to a working state
-    try bebop.orm.migrate(allocator, pool);
+    try bebop.orm.migrate(allocator, std.testing.io, pool);
 }

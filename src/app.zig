@@ -26,12 +26,16 @@ pub fn notFound(_: *App, req: *httpz.Request, res: *httpz.Response) !void {
 
 pub fn dispatch(self: *App, action: httpz.Action(*RequestContext), req: *httpz.Request, res: *httpz.Response) !void {
     if (comptime builtin.mode == .Debug) {
-        var timer = try std.time.Timer.start();
+        var ts: std.os.linux.timespec = undefined;
+        _ = std.os.linux.clock_gettime(.MONOTONIC, &ts);
+        const start_ns: i128 = @as(i128, ts.sec) * std.time.ns_per_s + ts.nsec;
 
         var ctx = RequestContext{ .app = self };
         try action(&ctx, req, res);
 
-        const elapsed = timer.lap() / 1000;
+        _ = std.os.linux.clock_gettime(.MONOTONIC, &ts);
+        const end_ns: i128 = @as(i128, ts.sec) * std.time.ns_per_s + ts.nsec;
+        const elapsed = @divTrunc(end_ns - start_ns, 1000);
         std.log.info("{d}\t{}\t{s}\t{d}us", .{ res.status, req.method, req.url.path, elapsed });
     } else {
         var ctx = RequestContext{ .app = self };

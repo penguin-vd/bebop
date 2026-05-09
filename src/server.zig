@@ -14,11 +14,12 @@ const DefaultApp = @import("app.zig");
 const DefaultRouter = http.Router(*DefaultApp, DefaultApp.Action);
 
 pub fn start(
+    init: std.process.Init,
     config: Config,
     comptime registerRoutes: fn (*DefaultRouter) anyerror!void,
     comptime registerCommands: ?fn (std.mem.Allocator) anyerror!void,
 ) !void {
-    try Server(*DefaultApp, DefaultApp.Action).start(config, DefaultApp.init, registerRoutes, registerCommands);
+    try Server(*DefaultApp, DefaultApp.Action).start(init, config, DefaultApp.init, registerRoutes, registerCommands);
 }
 
 pub fn Server(comptime Handler: type, comptime Action: type) type {
@@ -26,14 +27,13 @@ pub fn Server(comptime Handler: type, comptime Action: type) type {
 
     return struct {
         pub fn start(
+            init: std.process.Init,
             config: Config,
             comptime initFn: fn (*pg.Pool, []const u8) App,
             comptime registerRoutes: fn (*http.Router(Handler, Action)) anyerror!void,
             comptime registerCommands: ?fn (std.mem.Allocator) anyerror!void,
         ) !void {
-            var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-            const allocator = gpa.allocator();
-            defer _ = gpa.deinit();
+            const allocator = init.gpa;
 
             defer cmd.deinit(allocator);
             try cmd.register(allocator, cmd.migrations.Apply);
@@ -41,24 +41,25 @@ pub fn Server(comptime Handler: type, comptime Action: type) type {
             try cmd.register(allocator, cmd.debug.Router(Handler, Action, registerRoutes));
             try cmd.register(allocator, cmd.key.Generate);
             if (registerCommands) |f| try f(allocator);
-            try cmd.handle(allocator);
+            try cmd.handle(allocator, init.minimal.args, init.io);
 
             const app_key = blk: {
-                var env_map = try std.process.getEnvMap(allocator);
-                defer env_map.deinit();
-                const key = env_map.get("APP_KEY") orelse return error.MissingAppKey;
+                const key = init.environ_map.get("APP_KEY") orelse return error.MissingAppKey;
                 break :blk try allocator.dupe(u8, key);
             };
             defer allocator.free(app_key);
 
-            var pool = try db_module.get_pool(allocator);
+            var pool = try db_module.get_pool(init.io, allocator);
             defer pool.deinit();
 
             var app = initFn(pool, app_key);
 
-            var server = try httpz.Server(Handler).init(allocator, .{
-                .port = config.port,
-                .address = config.address,
+            const httpz_address = if (std.mem.eql(u8, config.address, "127.0.0.1"))
+                httpz.Config.Address.localhost(config.port)
+            else
+                httpz.Config.Address.all(config.port);
+            var server = try httpz.Server(Handler).init(init.io, allocator, .{
+                .address = httpz_address,
             }, &app);
 
             const httpz_router = try server.router(.{});

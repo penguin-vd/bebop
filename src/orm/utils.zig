@@ -229,7 +229,9 @@ pub fn QueryFilter(comptime Model: type) type {
         }
     }
 
-    comptime var filter_fields: [field_count]std.builtin.Type.StructField = undefined;
+    comptime var filter_names: [field_count][]const u8 = undefined;
+    comptime var filter_types: [field_count]type = undefined;
+    comptime var filter_attrs: [field_count]std.builtin.Type.StructField.Attributes = undefined;
     comptime var idx: usize = 0;
 
     inline for (struct_info.fields) |field| {
@@ -238,102 +240,68 @@ pub fn QueryFilter(comptime Model: type) type {
             else => field.type,
         };
 
-        filter_fields[idx] = .{
-            .name = field.name,
-            .type = ?field.type,
-            .default_value_ptr = &@as(?field.type, null),
-            .is_comptime = false,
-            .alignment = @alignOf(?field.type),
-        };
+        const default_field: ?field.type = null;
+        filter_names[idx] = field.name;
+        filter_types[idx] = ?field.type;
+        filter_attrs[idx] = .{ .default_value_ptr = &default_field };
         idx += 1;
 
         switch (@typeInfo(base_type)) {
             .pointer => |ptr_info| {
                 if (ptr_info.size == .slice and ptr_info.child == u8) {
-                    filter_fields[idx] = .{
-                        .name = field.name ++ "__contains",
-                        .type = ?[]const u8,
-                        .default_value_ptr = &@as(?[]const u8, null),
-                        .is_comptime = false,
-                        .alignment = @alignOf(?[]const u8),
-                    };
+                    const default_str: ?[]const u8 = null;
+                    filter_names[idx] = field.name ++ "__contains";
+                    filter_types[idx] = ?[]const u8;
+                    filter_attrs[idx] = .{ .default_value_ptr = &default_str };
                     idx += 1;
 
-                    filter_fields[idx] = .{
-                        .name = field.name ++ "__startsWith",
-                        .type = ?[]const u8,
-                        .default_value_ptr = &@as(?[]const u8, null),
-                        .is_comptime = false,
-                        .alignment = @alignOf(?[]const u8),
-                    };
+                    filter_names[idx] = field.name ++ "__startsWith";
+                    filter_types[idx] = ?[]const u8;
+                    filter_attrs[idx] = .{ .default_value_ptr = &default_str };
                     idx += 1;
 
-                    filter_fields[idx] = .{
-                        .name = field.name ++ "__endsWith",
-                        .type = ?[]const u8,
-                        .default_value_ptr = &@as(?[]const u8, null),
-                        .is_comptime = false,
-                        .alignment = @alignOf(?[]const u8),
-                    };
+                    filter_names[idx] = field.name ++ "__endsWith";
+                    filter_types[idx] = ?[]const u8;
+                    filter_attrs[idx] = .{ .default_value_ptr = &default_str };
                     idx += 1;
                 }
             },
             .int, .float => {
                 const OptType = ?base_type;
+                const default_num: OptType = null;
 
-                filter_fields[idx] = .{
-                    .name = field.name ++ "__gt",
-                    .type = OptType,
-                    .default_value_ptr = &@as(OptType, null),
-                    .is_comptime = false,
-                    .alignment = @alignOf(OptType),
-                };
+                filter_names[idx] = field.name ++ "__gt";
+                filter_types[idx] = OptType;
+                filter_attrs[idx] = .{ .default_value_ptr = &default_num };
                 idx += 1;
 
-                filter_fields[idx] = .{
-                    .name = field.name ++ "__gte",
-                    .type = OptType,
-                    .default_value_ptr = &@as(OptType, null),
-                    .is_comptime = false,
-                    .alignment = @alignOf(OptType),
-                };
+                filter_names[idx] = field.name ++ "__gte";
+                filter_types[idx] = OptType;
+                filter_attrs[idx] = .{ .default_value_ptr = &default_num };
                 idx += 1;
 
-                filter_fields[idx] = .{
-                    .name = field.name ++ "__lt",
-                    .type = OptType,
-                    .default_value_ptr = &@as(OptType, null),
-                    .is_comptime = false,
-                    .alignment = @alignOf(OptType),
-                };
+                filter_names[idx] = field.name ++ "__lt";
+                filter_types[idx] = OptType;
+                filter_attrs[idx] = .{ .default_value_ptr = &default_num };
                 idx += 1;
 
-                filter_fields[idx] = .{
-                    .name = field.name ++ "__lte",
-                    .type = OptType,
-                    .default_value_ptr = &@as(OptType, null),
-                    .is_comptime = false,
-                    .alignment = @alignOf(OptType),
-                };
+                filter_names[idx] = field.name ++ "__lte";
+                filter_types[idx] = OptType;
+                filter_attrs[idx] = .{ .default_value_ptr = &default_num };
                 idx += 1;
             },
             else => {},
         }
     }
 
-    return @Type(.{ .@"struct" = .{
-        .layout = .auto,
-        .fields = &filter_fields,
-        .decls = &.{},
-        .is_tuple = false,
-    } });
+    return @Struct(.auto, null, &filter_names, &filter_types, &filter_attrs);
 }
 
 pub fn table_exists(conn: anytype, table_name: []const u8) !bool {
     var result = try conn.query("SELECT count(*) FROM information_schema.tables WHERE table_name = $1", .{table_name});
     defer result.deinit();
     if (try result.next()) |row| {
-        const count = row.get(i64, 0);
+        const count = try row.get(i64, 0);
         while (try result.next() != null) {}
         return count > 0;
     }
@@ -344,7 +312,7 @@ pub fn index_exists(conn: anytype, index_name: []const u8) !bool {
     var result = try conn.query("SELECT count(*) FROM pg_indexes WHERE indexname = $1", .{index_name});
     defer result.deinit();
     if (try result.next()) |row| {
-        const count = row.get(i64, 0);
+        const count = try row.get(i64, 0);
         while (try result.next() != null) {}
         return count > 0;
     }
@@ -361,16 +329,16 @@ pub fn get_table_information(allocator: std.mem.Allocator, conn: anytype, table_
     var result = try conn.query(sql, .{table_name});
     defer result.deinit();
 
-    var array: std.ArrayList(TableInformation) = .{};
+    var array: std.ArrayList(TableInformation) = .empty;
 
     while (try result.next()) |row| {
-        const t = row.get([]const u8, 1);
+        const t = try row.get([]const u8, 1);
         const tUpper = try allocator.alloc(u8, t.len);
         for (t, 0..) |char, i| {
             tUpper[i] = std.ascii.toLower(char);
         }
 
-        const c = row.get([]const u8, 0);
+        const c = try row.get([]const u8, 0);
         const cClone = try allocator.dupe(u8, c);
         try array.append(allocator, .{
             .type = tUpper,

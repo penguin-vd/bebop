@@ -7,7 +7,7 @@ pub const Uuid = struct {
 
     pub fn new() Uuid {
         var bytes: [16]u8 = undefined;
-        std.crypto.random.bytes(&bytes);
+        _ = std.os.linux.getrandom(&bytes, bytes.len, 0);
         bytes[6] = (bytes[6] & 0x0F) | 0x40;
         bytes[8] = (bytes[8] & 0x3F) | 0x80;
         return .{ .bytes = bytes };
@@ -62,7 +62,9 @@ pub const DateTime = struct {
     pub const sql_type = "TIMESTAMPTZ";
 
     pub fn now() DateTime {
-        return .{ .micros = std.time.microTimestamp() };
+        var _ts: std.os.linux.timespec = undefined;
+        _ = std.os.linux.clock_gettime(.REALTIME, &_ts);
+        return .{ .micros = _ts.sec * std.time.us_per_s + @divTrunc(_ts.nsec, 1000) };
     }
 
     pub fn fromUnix(seconds: i64) DateTime {

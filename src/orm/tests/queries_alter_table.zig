@@ -84,7 +84,7 @@ const ModelWithFK = struct {
 };
 
 fn table_info_from(allocator: std.mem.Allocator, columns: []const [2][]const u8) !std.ArrayList(utils.TableInformation) {
-    var list: std.ArrayList(utils.TableInformation) = .{};
+    var list: std.ArrayList(utils.TableInformation) = .empty;
     for (columns) |col| {
         try list.append(allocator, .{
             .column = try allocator.dupe(u8, col[0]),

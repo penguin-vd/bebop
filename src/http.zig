@@ -8,7 +8,7 @@ const RouteRecorder = struct {
     const Entry = struct { method: []const u8, path: []const u8 };
 
     fn init(allocator: std.mem.Allocator) RouteRecorder {
-        return .{ .allocator = allocator, .routes = std.ArrayList(Entry){} };
+        return .{ .allocator = allocator, .routes = .empty };
     }
 
     fn deinit(self: *RouteRecorder) void {

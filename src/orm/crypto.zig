@@ -7,14 +7,22 @@ const key_len = Aes256Gcm.key_length;
 
 var cached_key: ?[key_len]u8 = null;
 
+fn getenv(key: []const u8) ?[]const u8 {
+    var i: usize = 0;
+    while (std.c.environ[i]) |entry| : (i += 1) {
+        const s = std.mem.span(entry);
+        if (std.mem.startsWith(u8, s, key) and s.len > key.len and s[key.len] == '=') {
+            return s[key.len + 1 ..];
+        }
+    }
+    return null;
+}
+
 pub fn loadKey(allocator: std.mem.Allocator) ![key_len]u8 {
+    _ = allocator;
     if (cached_key) |k| return k;
 
-    const raw = std.process.getEnvVarOwned(allocator, "APP_KEY") catch |err| switch (err) {
-        error.EnvironmentVariableNotFound => return error.MissingAppKey,
-        else => return err,
-    };
-    defer allocator.free(raw);
+    const raw = getenv("APP_KEY") orelse return error.MissingAppKey;
 
     var key: [key_len]u8 = undefined;
     const prefix = "base64:";
@@ -34,7 +42,7 @@ pub fn loadKey(allocator: std.mem.Allocator) ![key_len]u8 {
 
 pub fn encryptWithKey(allocator: std.mem.Allocator, key: [key_len]u8, plaintext: []const u8) ![]u8 {
     var nonce: [nonce_len]u8 = undefined;
-    std.crypto.random.bytes(&nonce);
+    _ = std.os.linux.getrandom(&nonce, nonce.len, 0);
 
     const ciphertext = try allocator.alloc(u8, plaintext.len);
     defer allocator.free(ciphertext);

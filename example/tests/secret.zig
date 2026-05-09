@@ -68,7 +68,7 @@ test "secret: encrypted token round-trips through DB (raw ciphertext != plaintex
     defer raw.deinit();
 
     const row = (try raw.next()) orelse return error.NoRow;
-    const raw_token = row.get([]const u8, 0);
+    const raw_token = try row.get([]const u8, 0);
     try std.testing.expect(!std.mem.eql(u8, "plaintext-token", raw_token));
     // AES-GCM output is base64; nonce(12) + ct(15) + tag(16) = 43 bytes → 60 base64 chars.
     try std.testing.expect(raw_token.len >= 60);

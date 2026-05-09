@@ -22,7 +22,7 @@ pub fn build_create_table_query(
     else
         unreachable;
 
-    var sql: std.ArrayList(u8) = .{};
+    var sql: std.ArrayList(u8) = .empty;
     defer sql.deinit(allocator);
 
     try sql.print(allocator, "CREATE TABLE IF NOT EXISTS {s} (\n", .{table_name});
@@ -32,7 +32,7 @@ pub fn build_create_table_query(
 
     const struct_info = type_info.@"struct";
 
-    var primary_keys: std.ArrayList([]const u8) = .{};
+    var primary_keys: std.ArrayList([]const u8) = .empty;
     defer primary_keys.deinit(allocator);
 
     inline for (struct_info.fields) |field| {
@@ -160,7 +160,7 @@ pub fn build_pivot_table_queries(
             const owner_fk = comptime owner_table ++ "_id";
             const related_fk = comptime related_table ++ "_id";
 
-            var sql: std.ArrayList(u8) = .{};
+            var sql: std.ArrayList(u8) = .empty;
             defer sql.deinit(allocator);
 
             try sql.print(allocator,
@@ -227,7 +227,7 @@ pub fn build_alter_table_query(
     else
         unreachable;
 
-    var sql: std.ArrayList(u8) = .{};
+    var sql: std.ArrayList(u8) = .empty;
     defer sql.deinit(allocator);
 
     const type_info = @typeInfo(Model);
@@ -235,7 +235,7 @@ pub fn build_alter_table_query(
 
     const struct_info = type_info.@"struct";
 
-    var model_columns: std.ArrayList([]const u8) = .{};
+    var model_columns: std.ArrayList([]const u8) = .empty;
     defer {
         for (model_columns.items) |item| {
             allocator.free(item);
@@ -387,7 +387,7 @@ pub fn build_reverse_alter_table_query(
     else
         unreachable;
 
-    var sql: std.ArrayList(u8) = .{};
+    var sql: std.ArrayList(u8) = .empty;
     defer sql.deinit(allocator);
 
     const type_info = @typeInfo(Model);
@@ -395,7 +395,7 @@ pub fn build_reverse_alter_table_query(
 
     const struct_info = type_info.@"struct";
 
-    var model_columns: std.ArrayList([]const u8) = .{};
+    var model_columns: std.ArrayList([]const u8) = .empty;
     defer {
         for (model_columns.items) |item| allocator.free(item);
         model_columns.deinit(allocator);
@@ -470,7 +470,7 @@ pub fn build_create_index_queries(
     var results = try allocator.alloc([]const u8, indexes.len);
 
     for (indexes, 0..) |idx, i| {
-        var sql: std.ArrayList(u8) = .{};
+        var sql: std.ArrayList(u8) = .empty;
         defer sql.deinit(allocator);
 
         if (idx.unique) {
@@ -543,7 +543,7 @@ pub fn build_drop_index_queries(
     var results = try allocator.alloc([]const u8, indexes.len);
 
     for (indexes, 0..) |idx, i| {
-        var sql: std.ArrayList(u8) = .{};
+        var sql: std.ArrayList(u8) = .empty;
         defer sql.deinit(allocator);
 
         try sql.print(allocator, "DROP INDEX IF EXISTS ", .{});
@@ -579,7 +579,7 @@ pub fn get_index_names(allocator: std.mem.Allocator, comptime Model: type) ![]co
         if (idx.name) |name| {
             results[i] = try allocator.dupe(u8, name);
         } else {
-            var name_buf: std.ArrayList(u8) = .{};
+            var name_buf: std.ArrayList(u8) = .empty;
             defer name_buf.deinit(allocator);
 
             try name_buf.print(allocator, "idx_{s}", .{table_name});

@@ -1,6 +1,6 @@
 FROM alpine:latest AS zig-base
 
-ENV ZIG_VERSION=0.15.2
+ENV ZIG_VERSION=0.16.0
 
 RUN apk add --no-cache curl xz ca-certificates git && \
     ARCH=$(uname -m) && \

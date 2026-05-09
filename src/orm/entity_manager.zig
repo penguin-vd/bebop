@@ -23,6 +23,7 @@ pub fn EntityManager(comptime Model: type) type {
             new,
             managed,
             deleted,
+            deleted_done,
         };
 
         pub fn init(allocator: std.mem.Allocator, conn: *pg.Conn) Self {
@@ -124,10 +125,7 @@ pub fn EntityManager(comptime Model: type) type {
 
             var it = self.tracked_entities.iterator();
 
-            var keys_to_remove = std.ArrayList(i32){};
-            defer keys_to_remove.deinit(self.allocator);
-
-            var keys_to_update = std.ArrayList(struct { old: i32, new: i32 }){};
+            var keys_to_update = std.ArrayList(struct { old: i32, new: i32 }).empty;
             defer keys_to_update.deinit(self.allocator);
 
             const pk_info = comptime utils.get_primary_key_info(Model);
@@ -149,9 +147,9 @@ pub fn EntityManager(comptime Model: type) type {
                     },
                     .deleted => {
                         try self.deleteEntity(entity_entry.entity);
-                        try keys_to_remove.append(self.allocator, old_key);
-                        self.allocator.destroy(entity_entry.entity);
+                        entity_entry.state = .deleted_done;
                     },
+                    .deleted_done => {},
                 }
             }
 
@@ -161,16 +159,16 @@ pub fn EntityManager(comptime Model: type) type {
                 }
             }
 
-            for (keys_to_remove.items) |key| {
-                _ = self.tracked_entities.remove(key);
-            }
-
             try self.conn.commit();
         }
 
         pub fn freeModels(self: *Self, models: []*Model) void {
+            const pk_info = comptime utils.get_primary_key_info(Model);
             for (models) |model| {
+                const pk = @field(model, pk_info.name);
+                _ = self.tracked_entities.remove(pk);
                 self.freeModel(model);
+                self.allocator.destroy(model);
             }
             self.allocator.free(models);
         }
@@ -193,13 +191,13 @@ pub fn EntityManager(comptime Model: type) type {
             if (comptime @hasDecl(T, "pre_persist")) try entity.pre_persist();
 
             // Build INSERT SQL
-            var sql = std.ArrayList(u8){};
+            var sql = std.ArrayList(u8).empty;
             defer sql.deinit(self.allocator);
 
-            var columns = std.ArrayList(u8){};
+            var columns = std.ArrayList(u8).empty;
             defer columns.deinit(self.allocator);
 
-            var placeholders = std.ArrayList(u8){};
+            var placeholders = std.ArrayList(u8).empty;
             defer placeholders.deinit(self.allocator);
 
             var param_index: usize = 1;
@@ -234,7 +232,7 @@ pub fn EntityManager(comptime Model: type) type {
             var stmt = try self.conn.prepare(sql.items);
             errdefer stmt.deinit();
 
-            var scratch: std.ArrayList([]u8) = .{};
+            var scratch: std.ArrayList([]u8) = .empty;
             defer {
                 for (scratch.items) |s| self.allocator.free(s);
                 scratch.deinit(self.allocator);
@@ -246,7 +244,7 @@ pub fn EntityManager(comptime Model: type) type {
             defer result.deinit();
 
             const id = if (try result.next()) |row|
-                row.get(i32, 0)
+                try row.get(i32, 0)
             else
                 return error.InsertFailed;
 
@@ -269,7 +267,7 @@ pub fn EntityManager(comptime Model: type) type {
 
             if (comptime @hasDecl(T, "pre_update")) try entity.pre_update();
 
-            var sql = std.ArrayList(u8){};
+            var sql = std.ArrayList(u8).empty;
             defer sql.deinit(self.allocator);
 
             try sql.print(self.allocator, "UPDATE {s} SET ", .{table_name});
@@ -300,7 +298,7 @@ pub fn EntityManager(comptime Model: type) type {
             var stmt = try self.conn.prepare(sql.items);
             errdefer stmt.deinit();
 
-            var scratch: std.ArrayList([]u8) = .{};
+            var scratch: std.ArrayList([]u8) = .empty;
             defer {
                 for (scratch.items) |s| self.allocator.free(s);
                 scratch.deinit(self.allocator);
@@ -385,7 +383,7 @@ pub fn EntityManager(comptime Model: type) type {
                 }
             }
 
-            var sql = std.ArrayList(u8){};
+            var sql = std.ArrayList(u8).empty;
             defer sql.deinit(self.allocator);
 
             try sql.print(self.allocator, "DELETE FROM {s} WHERE {s} = $1", .{ table_name, pk_column_name });
@@ -427,7 +425,7 @@ pub fn EntityManager(comptime Model: type) type {
             }
 
             // Build column list
-            var columns = std.ArrayList(u8){};
+            var columns = std.ArrayList(u8).empty;
             defer columns.deinit(self.allocator);
 
             {
@@ -450,7 +448,7 @@ pub fn EntityManager(comptime Model: type) type {
             }
 
             // Build full INSERT SQL with multiple VALUE rows
-            var sql = std.ArrayList(u8){};
+            var sql = std.ArrayList(u8).empty;
             defer sql.deinit(self.allocator);
 
             try sql.print(self.allocator, "INSERT INTO {s} ({s}) VALUES ", .{ table_name, columns.items });
@@ -473,7 +471,7 @@ pub fn EntityManager(comptime Model: type) type {
             var stmt = try self.conn.prepare(sql.items);
             errdefer stmt.deinit();
 
-            var scratch: std.ArrayList([]u8) = .{};
+            var scratch: std.ArrayList([]u8) = .empty;
             defer {
                 for (scratch.items) |s| self.allocator.free(s);
                 scratch.deinit(self.allocator);
@@ -490,7 +488,7 @@ pub fn EntityManager(comptime Model: type) type {
             // Assign returned IDs to entities
             var idx: usize = 0;
             while (try result.next()) |row| : (idx += 1) {
-                @field(entities[idx], child_pk.name) = row.get(i32, 0);
+                @field(entities[idx], child_pk.name) = try row.get(i32, 0);
             }
 
             // Post-insert: cascade many-relations on children
@@ -514,7 +512,7 @@ pub fn EntityManager(comptime Model: type) type {
             const owner_fk = comptime owner_table ++ "_id";
             const related_fk = comptime related_table ++ "_id";
 
-            var sql = std.ArrayList(u8){};
+            var sql = std.ArrayList(u8).empty;
             defer sql.deinit(self.allocator);
 
             try sql.appendSlice(self.allocator, "INSERT INTO " ++ pivot_table ++ " (" ++ owner_fk ++ ", " ++ related_fk ++ ") VALUES ");
@@ -568,7 +566,7 @@ pub fn EntityManager(comptime Model: type) type {
 
         fn collectChildIds(self: *Self, comptime ChildType: type, children: []ChildType) anyerror!std.ArrayList(i32) {
             const child_pk = comptime utils.get_primary_key_info(ChildType);
-            var ids = std.ArrayList(i32){};
+            var ids = std.ArrayList(i32).empty;
 
             for (children) |*child| {
                 var child_id = @field(child.*, child_pk.name);

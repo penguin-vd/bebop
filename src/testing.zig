@@ -7,7 +7,7 @@ var shared_pool: ?*pg.Pool = null;
 
 fn initOnce() void {
     const allocator = std.heap.page_allocator;
-    const pool_instance = db.get_testing_pool(allocator) catch @panic("failed to create testing pool");
+    const pool_instance = db.get_testing_pool(std.testing.io, allocator) catch @panic("failed to create testing pool");
 
     // Reset the test database schema so migrations always replay cleanly
     var conn = pool_instance.acquire() catch @panic("failed to acquire connection");
@@ -15,14 +15,20 @@ fn initOnce() void {
     _ = conn.exec("DROP SCHEMA public CASCADE", .{}) catch @panic("failed to drop schema");
     _ = conn.exec("CREATE SCHEMA public", .{}) catch @panic("failed to create schema");
 
-    orm.migrate(allocator, pool_instance) catch @panic("failed to run migrations");
+    orm.migrate(allocator, std.testing.io, pool_instance) catch @panic("failed to run migrations");
     shared_pool = pool_instance;
 }
 
-var once = std.once(initOnce);
+var init_done: bool = false;
+
+fn ensureInit() void {
+    if (init_done) return;
+    init_done = true;
+    initOnce();
+}
 
 pub fn setup() void {
-    once.call();
+    ensureInit();
 }
 
 pub fn clear() !void {
@@ -46,7 +52,7 @@ fn truncate(p: *pg.Pool, allocator: std.mem.Allocator) !void {
     var result = try conn.query(query, .{});
     defer result.deinit();
 
-    var tables = std.ArrayList([]const u8){};
+    var tables: std.ArrayList([]const u8) = .empty;
     defer {
         for (tables.items) |table| {
             allocator.free(table);
@@ -55,14 +61,14 @@ fn truncate(p: *pg.Pool, allocator: std.mem.Allocator) !void {
     }
 
     while (try result.next()) |row| {
-        const tablename = row.get([]const u8, 0);
+        const tablename = try row.get([]const u8, 0);
         const owned_name = try allocator.dupe(u8, tablename);
         try tables.append(allocator, owned_name);
     }
 
     if (tables.items.len == 0) return;
 
-    var truncate_query = std.ArrayList(u8){};
+    var truncate_query: std.ArrayList(u8) = .empty;
     defer truncate_query.deinit(allocator);
 
     try truncate_query.appendSlice(allocator, "TRUNCATE ");
@@ -80,7 +86,7 @@ pub const TestEnvironment = struct {
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) !TestEnvironment {
-        once.call();
+        ensureInit();
         const p = shared_pool.?;
         try truncate(p, allocator);
         return .{ .pool = p, .allocator = allocator };

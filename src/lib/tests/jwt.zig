@@ -4,7 +4,7 @@ const jwt = @import("../jwt.zig");
 test "generate and verify round-trip" {
     const allocator = std.testing.allocator;
     const secret = "supersecret";
-    const claims = jwt.Claims{ .sub = 42, .exp = std.time.timestamp() + 3600 };
+    const claims = jwt.Claims{ .sub = 42, .exp = blk: { var _ts: std.os.linux.timespec = undefined; _ = std.os.linux.clock_gettime(.REALTIME, &_ts); break :blk _ts.sec; } + 3600 };
 
     const token = try jwt.generate(jwt.Claims, allocator, claims, secret);
     defer allocator.free(token);
@@ -18,7 +18,7 @@ test "generate and verify round-trip" {
 test "verify rejects expired token" {
     const allocator = std.testing.allocator;
     const secret = "supersecret";
-    const claims = jwt.Claims{ .sub = 1, .exp = std.time.timestamp() - 1 };
+    const claims = jwt.Claims{ .sub = 1, .exp = blk: { var _ts: std.os.linux.timespec = undefined; _ = std.os.linux.clock_gettime(.REALTIME, &_ts); break :blk _ts.sec; } - 1 };
 
     const token = try jwt.generate(jwt.Claims, allocator, claims, secret);
     defer allocator.free(token);
@@ -28,7 +28,7 @@ test "verify rejects expired token" {
 
 test "verify rejects wrong secret" {
     const allocator = std.testing.allocator;
-    const claims = jwt.Claims{ .sub = 1, .exp = std.time.timestamp() + 3600 };
+    const claims = jwt.Claims{ .sub = 1, .exp = blk: { var _ts: std.os.linux.timespec = undefined; _ = std.os.linux.clock_gettime(.REALTIME, &_ts); break :blk _ts.sec; } + 3600 };
 
     const token = try jwt.generate(jwt.Claims, allocator, claims, "correct-secret");
     defer allocator.free(token);
@@ -39,7 +39,7 @@ test "verify rejects wrong secret" {
 test "verify rejects tampered payload" {
     const allocator = std.testing.allocator;
     const secret = "supersecret";
-    const claims = jwt.Claims{ .sub = 1, .exp = std.time.timestamp() + 3600 };
+    const claims = jwt.Claims{ .sub = 1, .exp = blk: { var _ts: std.os.linux.timespec = undefined; _ = std.os.linux.clock_gettime(.REALTIME, &_ts); break :blk _ts.sec; } + 3600 };
 
     const token = try jwt.generate(jwt.Claims, allocator, claims, secret);
     defer allocator.free(token);
