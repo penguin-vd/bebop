@@ -1,6 +1,6 @@
 # Bebop
 
-*A Symfony-inspired web framework and ORM for Zig 0.15.1.*
+*A Symfony-inspired web framework and ORM for Zig 0.16.0.*
 
 Bebop is a high-performance, type-safe web framework and Object-Relational Mapper (ORM) for the Zig programming language. It is designed to be fast, modern, and developer-friendly, drawing inspiration from the robust architecture of the Symfony framework.
 
