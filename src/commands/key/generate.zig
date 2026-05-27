@@ -2,7 +2,8 @@ const std = @import("std");
 
 pub const command = "key:generate";
 
-pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
+pub fn run(allocator: std.mem.Allocator, args: []const []const u8, io: std.Io) !void {
+    _ = args;
     _ = io;
     var key: [32]u8 = undefined;
     _ = std.os.linux.getrandom(&key, key.len, 0);

@@ -14,7 +14,7 @@ pub const key = struct {
     pub const Generate = @import("key/generate.zig");
 };
 
-var commands: std.ArrayList(struct { command: []const u8, run: *const fn (allocator: std.mem.Allocator, io: std.Io) anyerror!void }) = .empty;
+var commands: std.ArrayList(struct { command: []const u8, run: *const fn (allocator: std.mem.Allocator, args: []const []const u8, io: std.Io) anyerror!void }) = .empty;
 
 pub fn register(allocator: std.mem.Allocator, comptime Command: type) !void {
     if (!@hasDecl(Command, "command")) {
@@ -46,7 +46,7 @@ pub fn handle(allocator: std.mem.Allocator, args: std.process.Args, io: std.Io) 
 
     for (commands.items) |cmd| {
         if (std.mem.eql(u8, cmd.command, command)) {
-            try cmd.run(allocator, io);
+            try cmd.run(allocator, argv[2..], io);
             std.process.exit(0);
         }
     }
