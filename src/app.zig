@@ -13,9 +13,10 @@ pub const Action = *const fn (*RequestContext, *httpz.Request, *httpz.Response) 
 
 db: *pg.Pool,
 app_key: []const u8,
+io: std.Io,
 
-pub fn init(db: *pg.Pool, app_key: []const u8) App {
-    return .{ .db = db, .app_key = app_key };
+pub fn init(io: std.Io, db: *pg.Pool, app_key: []const u8) App {
+    return .{ .io = io, .db = db, .app_key = app_key };
 }
 
 pub fn notFound(_: *App, req: *httpz.Request, res: *httpz.Response) !void {

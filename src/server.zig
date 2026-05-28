@@ -29,7 +29,7 @@ pub fn Server(comptime Handler: type, comptime Action: type) type {
         pub fn start(
             init: std.process.Init,
             config: Config,
-            comptime initFn: fn (*pg.Pool, []const u8) App,
+            comptime initFn: fn (std.Io, *pg.Pool, []const u8) App,
             comptime registerRoutes: fn (*http.Router(Handler, Action)) anyerror!void,
             comptime registerCommands: ?fn (std.mem.Allocator) anyerror!void,
         ) !void {
@@ -52,7 +52,7 @@ pub fn Server(comptime Handler: type, comptime Action: type) type {
             var pool = try db_module.get_pool(init.io, allocator);
             defer pool.deinit();
 
-            var app = initFn(pool, app_key);
+            var app = initFn(init.io, pool, app_key);
 
             const httpz_address = if (std.mem.eql(u8, config.address, "127.0.0.1"))
                 httpz.Config.Address.localhost(config.port)

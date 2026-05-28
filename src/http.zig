@@ -1,6 +1,11 @@
 const std = @import("std");
 const httpz = @import("httpz");
 
+pub fn redirect(res: *httpz.Response, location: []const u8) void {
+    res.status = 302;
+    res.header("Location", location);
+}
+
 const RouteRecorder = struct {
     allocator: std.mem.Allocator,
     routes: std.ArrayList(Entry),
