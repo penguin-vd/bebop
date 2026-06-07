@@ -694,7 +694,10 @@ pub fn QueryBuilder(comptime Model: type) type {
             var array: std.ArrayList(ChildType) = .empty;
 
             const model = parseOneRelationField(allocator, ChildType, Parent, row, col_index) catch |err| switch (err) {
-                error.FoundNullValue => return try array.toOwnedSlice(allocator),
+                error.FoundNullValue => {
+                    col_index.* += comptime ft.count_total_fields(ChildType, Parent);
+                    return try array.toOwnedSlice(allocator);
+                },
                 else => return err,
             };
 

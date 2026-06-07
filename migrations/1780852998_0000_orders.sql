@@ -1,0 +1,5 @@
+-- UP
+ALTER TABLE orders ADD COLUMN deleted_at TIMESTAMPTZ;
+
+-- DOWN
+ALTER TABLE orders DROP COLUMN IF EXISTS deleted_at;

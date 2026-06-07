@@ -279,3 +279,102 @@ test "delete order" {
     const deleted = try em.get(id);
     try std.testing.expectEqual(null, deleted);
 }
+
+test "nullable DateTime: read back null deleted_at" {
+    const allocator = std.testing.allocator;
+
+    var conn = try bebop.testing.pool().acquire();
+    defer conn.release();
+
+    const product = try createProduct(allocator, conn, "Keyboard", "Peripherals");
+
+    var em = bebop.orm.EntityManager(Order).init(allocator, conn);
+    defer em.deinit();
+
+    var lines = [_]OrderLine{
+        .{ .quantity = 1, .order = std.mem.zeroes(Order), .product = product },
+    };
+
+    const order = try em.create(.{ .reference = "NULL-DT-1", .order_lines = &lines });
+    defer allocator.destroy(order);
+    try em.flush();
+    const id = order.id;
+
+    em.clear();
+
+    const fetched = try em.get(id);
+    try std.testing.expect(fetched != null);
+    defer em.freeModel(fetched.?);
+
+    try std.testing.expectEqual(null, fetched.?.deleted_at);
+}
+
+test "nullable DateTime: create order with non-null deleted_at and read back" {
+    const allocator = std.testing.allocator;
+
+    var conn = try bebop.testing.pool().acquire();
+    defer conn.release();
+
+    const product = try createProduct(allocator, conn, "Mouse", "Peripherals");
+
+    var em = bebop.orm.EntityManager(Order).init(allocator, conn);
+    defer em.deinit();
+
+    const ts = bebop.orm.DateTime.fromUnix(1_700_000_000);
+
+    var lines = [_]OrderLine{
+        .{ .quantity = 1, .order = std.mem.zeroes(Order), .product = product },
+    };
+
+    const order = try em.create(.{
+        .reference = "NULL-DT-2",
+        .order_lines = &lines,
+        .deleted_at = ts,
+    });
+    defer allocator.destroy(order);
+    try em.flush();
+    const id = order.id;
+
+    em.clear();
+
+    const fetched = try em.get(id);
+    try std.testing.expect(fetched != null);
+    defer em.freeModel(fetched.?);
+
+    try std.testing.expect(fetched.?.deleted_at != null);
+    try std.testing.expectEqual(ts.micros, fetched.?.deleted_at.?.micros);
+}
+
+test "nullable DateTime: update deleted_at from null to a value" {
+    const allocator = std.testing.allocator;
+
+    var conn = try bebop.testing.pool().acquire();
+    defer conn.release();
+
+    const product = try createProduct(allocator, conn, "Webcam", "Peripherals");
+
+    var em = bebop.orm.EntityManager(Order).init(allocator, conn);
+    defer em.deinit();
+
+    var lines = [_]OrderLine{
+        .{ .quantity = 1, .order = std.mem.zeroes(Order), .product = product },
+    };
+
+    const order = try em.create(.{ .reference = "NULL-DT-3", .order_lines = &lines });
+    defer allocator.destroy(order);
+    try em.flush();
+
+    try std.testing.expectEqual(null, order.deleted_at);
+
+    order.deleted_at = bebop.orm.DateTime.fromUnix(1_750_000_000);
+    try em.flush();
+    const id = order.id;
+
+    em.clear();
+
+    const fetched = try em.get(id);
+    try std.testing.expect(fetched != null);
+    defer em.freeModel(fetched.?);
+
+    try std.testing.expect(fetched.?.deleted_at != null);
+}
