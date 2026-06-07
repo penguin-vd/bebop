@@ -489,6 +489,10 @@ pub fn QueryBuilder(comptime Model: type) type {
                     @compileError("Unsupported pointer type: " ++ @typeName(T));
                 },
                 .optional => |opt_info| blk: {
+                    if (comptime utils.is_custom_type(opt_info.child)) {
+                        const raw = try row.get(?[]const u8, index);
+                        break :blk if (raw) |str| try opt_info.child.from_sql_param(allocator, str) else null;
+                    }
                     if (try row.get(T, index)) |_| {
                         break :blk try getFieldValue(allocator, opt_info.child, row, index);
                     }
